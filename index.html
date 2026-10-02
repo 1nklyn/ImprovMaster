@@ -3,875 +3,763 @@
 <head>
     <meta charset="UTF-8">
     <meta name="viewport" content="width=device-width, initial-scale=1.0">
-    <title>My Gemini Canvas Site</title>
-    import React, { useState, useEffect, useRef } from 'react';
-import { initializeApp } from 'firebase/app';
-import { getAuth, signInAnonymously, signInWithCustomToken, onAuthStateChanged } from 'firebase/auth';
-import { getFirestore, collection, addDoc, onSnapshot, query, orderBy, serverTimestamp, doc, deleteDoc } from 'firebase/firestore';
-import { Play, Square, RefreshCw, Mic, MicOff, Clock, FileText, CheckCircle, SkipForward, Award, MessageSquare, Target, Plus, Trash2 } from 'lucide-react';
-
-// Initialize Firebase outside the component
-const firebaseConfig = typeof __firebase_config !== 'undefined' ? JSON.parse(__firebase_config) : {};
-const app = initializeApp(firebaseConfig);
-const auth = getAuth(app);
-const db = getFirestore(app);
-const appId = typeof __app_id !== 'undefined' ? __app_id : 'default-app-id';
-
-const TOPICS = [
-  "The impact of Artificial Intelligence on everyday life",
-  "A funny encounter with a wild animal",
-  "Why the wheel is the greatest invention",
-  "The concept of 'Time Travel' - pros and cons",
-  "A biography of a completely made-up historical figure",
-  "Why pizza is the ultimate food",
-  "The history of the internet",
-  "Explain quantum physics to a 5-year-old",
-  "The social dynamics of a colony of ants",
-  "If you were president of the world for a day",
-  "The mystery of the Bermuda Triangle",
-  "Why sleep is overrated (or underrated)",
-  "The evolution of the common fork",
-  "Describe a color to someone who has been blind since birth",
-  "The psychology behind why we love cute things",
-  "A day in the life of a house cat",
-  "Why Pluto should (or shouldn't) be a planet again",
-  "The cultural significance of memes",
-  "If aliens landed tomorrow, what would be their first impression?",
-  "The ethics of cloning extinct animals",
-  "Why the book is always better than the movie",
-  "The logistics of colonizing Mars",
-  "A defense of pineapple on pizza",
-  "The history and impact of the potato",
-  "What happens when we die? (A comedic perspective)",
-  "The art of small talk",
-  "If animals could talk, which would be the rudest?",
-  "The most useless superpower to have",
-  "Why humans are so obsessed with Mars",
-  "The concept of infinity",
-  "A world where everyone has to sing instead of speak",
-  "The hidden dangers of everyday household items",
-  "Why procrastinating is actually a sign of genius",
-  "The history of the universe in 60 seconds",
-  "What dogs are really thinking about",
-  "The economic impact of teleportation",
-  "If you could replace handshakes with another greeting",
-  "The philosophy of reality TV",
-  "Why we should explore the oceans before space",
-  "A persuasive speech on why unicorns are real"
-];
-
-const ROLEPLAY_SCENARIOS = [
-  "You are a store manager. A customer is furiously demanding a refund for a half-eaten cake, claiming it was 'too delicious'. How do you de-escalate?",
-  "You are the CEO of a tech startup that just accidentally deleted all user data. You are live on a press conference. What do you say?",
-  "Your friend wants to borrow a large sum of money for a guaranteed 'get rich quick' scheme involving selling sand in the desert. Convince them it's a bad idea without insulting them.",
-  "You are an astronaut on Mars. You just broke the only coffee machine on the planet. Report this to Houston and propose a solution.",
-  "You are a mediator between two neighbors fighting over a tree whose apples fall into the other's yard. Propose a fair compromise."
-];
-
-const PHASE_TIMERS = {
-  research: 120, // 2 minutes
-  organize: 60,  // 1 minute
-  speak: 60,     // 1 minute
-  roleplay: 180  // 3 minutes
-};
-
-// Formats seconds into MM:SS
-const formatTime = (seconds) => {
-  const m = Math.floor(seconds / 60);
-  const s = seconds % 60;
-  return `${m}:${s.toString().padStart(2, '0')}`;
-};
-
-// Calls Gemini API to grade the speech
-const evaluateSpeech = async (topic, transcript, type, goals) => {
-  const apiKey = ""; // Canvas provides this automatically
-  const apiUrl = `https://generativelanguage.googleapis.com/v1beta/models/gemini-3-flash-preview:generateContent?key=${apiKey}`;
-
-  const goalsText = goals && goals.length > 0 
-    ? `\n\nAdditionally, specifically evaluate the speaker against their personal goals: ${goals.map(g => g.text).join(', ')}. Mention how well they adhered to these goals in your summary.` 
-    : '';
-
-  const prompt = type === 'quickYap' 
-    ? `Evaluate this 1-minute improv speech about: "${topic}".${goalsText}`
-    : `Evaluate this roleplay response to the scenario: "${topic}".${goalsText}`;
-
-  const payload = {
-    contents: [{ parts: [{ text: `${prompt}\n\nTranscript:\n"${transcript || '(No transcript recorded)'}"` }] }],
-    generationConfig: {
-      responseMimeType: "application/json",
-      responseSchema: {
-        type: "OBJECT",
-        properties: {
-          grade: { type: "STRING", description: "A letter grade (A+, A, B, C, D, or F) based on coherence, relevance, and fluency. If empty transcript, give F." },
-          summary: { type: "STRING", description: "A 2-3 sentence constructive feedback summary." }
-        },
-        required: ["grade", "summary"]
-      }
-    },
-    systemInstruction: {
-      parts: [{ text: "You are an expert speech and improv coach. You give fair, constructive feedback. You evaluate based on relevance to the topic, flow of ideas, and overall coherence." }]
-    }
-  };
-
-  try {
-    const response = await fetch(apiUrl, {
-      method: 'POST',
-      headers: { 'Content-Type': 'application/json' },
-      body: JSON.stringify(payload)
-    });
-    const data = await response.json();
-    const text = data.candidates?.[0]?.content?.parts?.[0]?.text;
-    if (text) {
-      return JSON.parse(text);
-    }
-  } catch (error) {
-    console.error("Gemini API Error:", error);
-  }
-  return { grade: "N/A", summary: "Failed to generate feedback. Please try again later." };
-};
-
-export default function App() {
-  const [user, setUser] = useState(null);
-  const [activeTab, setActiveTab] = useState('quickYap');
-  const [transcripts, setTranscripts] = useState([]);
-  const [loadingTranscripts, setLoadingTranscripts] = useState(true);
-  const [goals, setGoals] = useState([]);
-
-  // Authentication Setup
-  useEffect(() => {
-    const initAuth = async () => {
-      try {
-        if (typeof __initial_auth_token !== 'undefined' && __initial_auth_token) {
-          await signInWithCustomToken(auth, __initial_auth_token);
-        } else {
-          await signInAnonymously(auth);
+    <title>ImprovMaster - Practice Speaking</title>
+    <script src="https://cdn.tailwindcss.com"></script>
+    <style>
+        /* Custom scrollbar for better aesthetics */
+        ::-webkit-scrollbar { width: 6px; }
+        ::-webkit-scrollbar-track { background: transparent; }
+        ::-webkit-scrollbar-thumb { background: #cbd5e1; border-radius: 10px; }
+        ::-webkit-scrollbar-thumb:hover { background: #94a3b8; }
+        
+        .fade-in { animation: fadeIn 0.3s ease-in-out; }
+        @keyframes fadeIn {
+            from { opacity: 0; transform: translateY(10px); }
+            to { opacity: 1; transform: translateY(0); }
         }
-      } catch (err) {
-        console.error("Auth error:", err);
-      }
-    };
-    initAuth();
-    const unsubscribe = onAuthStateChanged(auth, setUser);
-    return () => unsubscribe();
-  }, []);
+    </style>
+</head>
+<body class="bg-slate-50 text-slate-900 font-sans h-screen flex flex-col overflow-hidden">
 
-  // Fetch Transcripts
-  useEffect(() => {
-    if (!user) return;
-    setLoadingTranscripts(true);
-    
-    const speechesRef = collection(db, 'artifacts', appId, 'users', user.uid, 'speeches');
-    // We fetch all and sort in memory per rules to avoid index requirements for complex queries if needed later
-    const q = query(speechesRef);
-
-    const unsubscribe = onSnapshot(q, (snapshot) => {
-      const data = snapshot.docs.map(doc => ({ id: doc.id, ...doc.data() }));
-      // Sort descending by time
-      data.sort((a, b) => (b.timestamp?.toMillis() || 0) - (a.timestamp?.toMillis() || 0));
-      setTranscripts(data);
-      setLoadingTranscripts(false);
-    }, (error) => {
-      console.error("Firestore error:", error);
-      setLoadingTranscripts(false);
-    });
-
-    return () => unsubscribe();
-  }, [user]);
-
-  // Fetch Goals
-  useEffect(() => {
-    if (!user) return;
-    const goalsRef = collection(db, 'artifacts', appId, 'users', user.uid, 'goals');
-    const q = query(goalsRef);
-
-    const unsubscribe = onSnapshot(q, (snapshot) => {
-      const data = snapshot.docs.map(doc => ({ id: doc.id, ...doc.data() }));
-      data.sort((a, b) => (a.timestamp?.toMillis() || 0) - (b.timestamp?.toMillis() || 0));
-      setGoals(data);
-    }, (error) => {
-      console.error("Firestore error fetching goals:", error);
-    });
-
-    return () => unsubscribe();
-  }, [user]);
-
-  const saveTranscript = async (data) => {
-    if (!user) return;
-    try {
-      await addDoc(collection(db, 'artifacts', appId, 'users', user.uid, 'speeches'), {
-        ...data,
-        timestamp: serverTimestamp()
-      });
-    } catch (err) {
-      console.error("Error saving transcript:", err);
-    }
-  };
-
-  const addGoal = async (text) => {
-    if (!user || !text.trim()) return;
-    try {
-      await addDoc(collection(db, 'artifacts', appId, 'users', user.uid, 'goals'), {
-        text: text.trim(),
-        timestamp: serverTimestamp()
-      });
-    } catch (err) {
-      console.error("Error adding goal:", err);
-    }
-  };
-
-  const removeGoal = async (goalId) => {
-    if (!user) return;
-    try {
-      await deleteDoc(doc(db, 'artifacts', appId, 'users', user.uid, 'goals', goalId));
-    } catch (err) {
-      console.error("Error removing goal:", err);
-    }
-  };
-
-  if (!user) {
-    return <div className="flex h-screen items-center justify-center bg-gray-50 text-gray-800">Authenticating...</div>;
-  }
-
-  return (
-    <div className="min-h-screen bg-slate-50 text-slate-900 font-sans flex flex-col">
-      {/* Header & Navigation */}
-      <header className="bg-white border-b border-slate-200 sticky top-0 z-10 shadow-sm">
-        <div className="max-w-7xl mx-auto px-4 h-16 flex items-center justify-between">
-          <div className="flex items-center gap-2 font-bold text-xl text-indigo-600">
-            <Mic className="w-6 h-6" />
-            <span>ImprovMaster</span>
-          </div>
-          <nav className="flex gap-1 sm:gap-4 overflow-x-auto">
-            {['quickYap', 'roleplay', 'transcripts'].map((tab) => (
-              <button
-                key={tab}
-                onClick={() => setActiveTab(tab)}
-                className={`px-3 py-2 rounded-md text-sm font-medium transition-colors ${
-                  activeTab === tab 
-                    ? 'bg-indigo-100 text-indigo-700' 
-                    : 'text-slate-600 hover:bg-slate-100 hover:text-slate-900'
-                }`}
-              >
-                {tab === 'quickYap' && 'Quick Yap'}
-                {tab === 'roleplay' && 'Roleplay'}
-                {tab === 'transcripts' && 'Past Transcripts'}
-              </button>
-            ))}
-          </nav>
+    <!-- Loading Overlay -->
+    <div id="loading-overlay" class="absolute inset-0 bg-slate-50 z-50 flex items-center justify-center">
+        <div class="flex flex-col items-center">
+            <svg class="animate-spin h-10 w-10 text-indigo-600 mb-4" xmlns="http://www.w3.org/2000/svg" fill="none" viewBox="0 0 24 24">
+                <circle class="opacity-25" cx="12" cy="12" r="10" stroke="currentColor" stroke-width="4"></circle>
+                <path class="opacity-75" fill="currentColor" d="M4 12a8 8 0 018-8V0C5.373 0 0 5.373 0 12h4zm2 5.291A7.962 7.962 0 014 12H0c0 3.042 1.135 5.824 3 7.938l3-2.647z"></path>
+            </svg>
+            <p class="text-slate-600 font-medium">Authenticating & Loading...</p>
         </div>
-      </header>
+    </div>
 
-      {/* Main Content Area */}
-      <div className="flex-1 max-w-7xl mx-auto w-full flex flex-col md:flex-row items-start gap-6 p-4 sm:p-6 md:p-8">
-        <aside className="w-full md:w-80 flex-shrink-0">
-          <GoalsPanel goals={goals} onAddGoal={addGoal} onRemoveGoal={removeGoal} />
+    <!-- Header -->
+    <header class="bg-white border-b border-slate-200 sticky top-0 z-10 shadow-sm flex-shrink-0 hidden" id="app-header">
+        <div class="max-w-7xl mx-auto px-4 h-16 flex items-center justify-between w-full">
+            <div class="flex items-center gap-2 font-bold text-xl text-indigo-600">
+                <svg xmlns="http://www.w3.org/2000/svg" width="24" height="24" viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="2" stroke-linecap="round" stroke-linejoin="round"><path d="M12 2a3 3 0 0 0-3 3v7a3 3 0 0 0 6 0V5a3 3 0 0 0-3-3Z"></path><path d="M19 10v2a7 7 0 0 1-14 0v-2"></path><line x1="12" x2="12" y1="19" y2="22"></line></svg>
+                <span>ImprovMaster</span>
+            </div>
+            <nav class="flex gap-1 sm:gap-4 overflow-x-auto" id="nav-tabs">
+                <button data-tab="quickYap" class="tab-btn px-3 py-2 rounded-md text-sm font-medium transition-colors bg-indigo-100 text-indigo-700">Quick Yap</button>
+                <button data-tab="roleplay" class="tab-btn px-3 py-2 rounded-md text-sm font-medium transition-colors text-slate-600 hover:bg-slate-100 hover:text-slate-900">Roleplay</button>
+                <button data-tab="transcripts" class="tab-btn px-3 py-2 rounded-md text-sm font-medium transition-colors text-slate-600 hover:bg-slate-100 hover:text-slate-900">Past Transcripts</button>
+            </nav>
+        </div>
+    </header>
+
+    <!-- Main Content Area -->
+    <div class="flex-1 max-w-7xl mx-auto w-full flex flex-col md:flex-row items-stretch gap-6 p-4 sm:p-6 md:p-8 overflow-hidden hidden" id="app-main">
+        
+        <!-- Sidebar: Goals Panel -->
+        <aside class="w-full md:w-80 flex-shrink-0 flex flex-col gap-4">
+            <div class="bg-white rounded-xl shadow-sm border border-slate-200 p-5 flex flex-col h-full md:h-auto md:max-h-full">
+                <div class="flex items-center gap-2 mb-4 text-indigo-700 flex-shrink-0">
+                    <svg xmlns="http://www.w3.org/2000/svg" width="20" height="20" viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="2" stroke-linecap="round" stroke-linejoin="round"><circle cx="12" cy="12" r="10"></circle><circle cx="12" cy="12" r="6"></circle><circle cx="12" cy="12" r="2"></circle></svg>
+                    <h2 class="text-lg font-bold text-slate-800">My Speech Goals</h2>
+                </div>
+                
+                <form id="goal-form" class="mb-4 flex gap-2 flex-shrink-0">
+                    <input type="text" id="goal-input" placeholder="e.g. Don't use 'um'" class="flex-1 bg-slate-50 border border-slate-200 rounded-lg px-3 py-2 text-sm focus:outline-none focus:ring-2 focus:ring-indigo-500" required />
+                    <button type="submit" class="bg-indigo-600 text-white p-2 rounded-lg hover:bg-indigo-700 transition-colors">
+                        <svg xmlns="http://www.w3.org/2000/svg" width="16" height="16" viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="2" stroke-linecap="round" stroke-linejoin="round"><line x1="12" x2="12" y1="5" y2="19"></line><line x1="5" x2="19" y1="12" y2="12"></line></svg>
+                    </button>
+                </form>
+
+                <div id="goals-list" class="space-y-2 overflow-y-auto flex-1 pr-1">
+                    <!-- Goals injected here -->
+                </div>
+            </div>
         </aside>
         
-        <main className="flex-1 w-full min-w-0">
-          {activeTab === 'quickYap' && <QuickYapTab onSave={saveTranscript} goals={goals} />}
-          {activeTab === 'roleplay' && <RoleplayTab onSave={saveTranscript} goals={goals} />}
-          {activeTab === 'transcripts' && <TranscriptsTab transcripts={transcripts} loading={loadingTranscripts} />}
+        <!-- Tab Content Area -->
+        <main class="flex-1 w-full min-w-0 bg-white rounded-xl shadow-sm border border-slate-200 p-6 sm:p-10 overflow-y-auto relative" id="tab-content">
+            <!-- Dynamic content injected here -->
         </main>
-      </div>
     </div>
-  );
-}
 
-function GoalsPanel({ goals, onAddGoal, onRemoveGoal }) {
-  const [newGoal, setNewGoal] = useState('');
+    <!-- FIREBASE AND APP LOGIC -->
+    <script type="module">
+        import { initializeApp } from "https://www.gstatic.com/firebasejs/11.6.1/firebase-app.js";
+        import { getAuth, signInAnonymously, signInWithCustomToken, onAuthStateChanged } from "https://www.gstatic.com/firebasejs/11.6.1/firebase-auth.js";
+        import { getFirestore, collection, addDoc, onSnapshot, query, serverTimestamp, doc, deleteDoc } from "https://www.gstatic.com/firebasejs/11.6.1/firebase-firestore.js";
 
-  const handleSubmit = (e) => {
-    e.preventDefault();
-    onAddGoal(newGoal);
-    setNewGoal('');
-  };
+        const firebaseConfig = typeof __firebase_config !== 'undefined' ? JSON.parse(__firebase_config) : {};
+        const appId = typeof __app_id !== 'undefined' ? __app_id : 'default-app-id';
+        
+        const app = initializeApp(firebaseConfig);
+        const auth = getAuth(app);
+        const db = getFirestore(app);
 
-  return (
-    <div className="bg-white rounded-xl shadow-sm border border-slate-200 p-5 md:sticky md:top-24">
-      <div className="flex items-center gap-2 mb-4 text-indigo-700">
-        <Target className="w-5 h-5" />
-        <h2 className="text-lg font-bold text-slate-800">My Speech Goals</h2>
-      </div>
-      
-      <form onSubmit={handleSubmit} className="mb-4 flex gap-2">
-        <input 
-          type="text" 
-          value={newGoal}
-          onChange={(e) => setNewGoal(e.target.value)}
-          placeholder="e.g. Don't use 'um'" 
-          className="flex-1 bg-slate-50 border border-slate-200 rounded-lg px-3 py-2 text-sm focus:outline-none focus:ring-2 focus:ring-indigo-500"
-        />
-        <button 
-          type="submit"
-          disabled={!newGoal.trim()}
-          className="bg-indigo-600 text-white p-2 rounded-lg hover:bg-indigo-700 disabled:opacity-50 transition-colors"
-        >
-          <Plus className="w-4 h-4" />
-        </button>
-      </form>
+        const TOPICS = [
+            "The impact of Artificial Intelligence on everyday life", "A funny encounter with a wild animal",
+            "Why the wheel is the greatest invention", "The concept of 'Time Travel' - pros and cons",
+            "A biography of a completely made-up historical figure", "Why pizza is the ultimate food",
+            "The history of the internet", "Explain quantum physics to a 5-year-old",
+            "The social dynamics of a colony of ants", "If you were president of the world for a day",
+            "The mystery of the Bermuda Triangle", "Why sleep is overrated (or underrated)",
+            "The evolution of the common fork", "Describe a color to someone who has been blind since birth",
+            "The psychology behind why we love cute things", "A day in the life of a house cat",
+            "Why Pluto should (or shouldn't) be a planet again", "The cultural significance of memes",
+            "If aliens landed tomorrow, what would be their first impression?", "The ethics of cloning extinct animals",
+            "Why the book is always better than the movie", "The logistics of colonizing Mars",
+            "A defense of pineapple on pizza", "The history and impact of the potato",
+            "What happens when we die? (A comedic perspective)", "The art of small talk",
+            "If animals could talk, which would be the rudest?", "The most useless superpower to have",
+            "Why humans are so obsessed with Mars", "The concept of infinity"
+        ];
 
-      <div className="space-y-2 max-h-[60vh] overflow-y-auto pr-1">
-        {goals.length === 0 ? (
-          <p className="text-sm text-slate-500 italic text-center py-4 bg-slate-50 rounded-lg">No goals added yet. Add some to get personalized AI feedback!</p>
-        ) : (
-          goals.map(goal => (
-            <div key={goal.id} className="flex items-center justify-between bg-slate-50 border border-slate-100 rounded-lg p-3 text-sm group transition-colors hover:border-indigo-200">
-              <span className="text-slate-700 break-words flex-1 pr-2">{goal.text}</span>
-              <button 
-                onClick={() => onRemoveGoal(goal.id)}
-                className="text-slate-400 hover:text-rose-500 md:opacity-0 group-hover:opacity-100 transition-opacity"
-                title="Remove Goal"
-              >
-                <Trash2 className="w-4 h-4" />
-              </button>
-            </div>
-          ))
-        )}
-      </div>
-    </div>
-  );
-}
+        const ROLEPLAY_SCENARIOS = [
+            "You are a store manager. A customer is furiously demanding a refund for a half-eaten cake, claiming it was 'too delicious'. How do you de-escalate?",
+            "You are the CEO of a tech startup that just accidentally deleted all user data. You are live on a press conference. What do you say?",
+            "Your friend wants to borrow a large sum of money for a guaranteed 'get rich quick' scheme involving selling sand in the desert. Convince them it's a bad idea without insulting them.",
+            "You are an astronaut on Mars. You just broke the only coffee machine on the planet. Report this to Houston and propose a solution.",
+            "You are a mediator between two neighbors fighting over a tree whose apples fall into the other's yard. Propose a fair compromise."
+        ];
 
-function QuickYapTab({ onSave, goals }) {
-  // Phases: idle, spinning, research, organize, speak, grading, finished
-  const [phase, setPhase] = useState('idle');
-  const [topic, setTopic] = useState('');
-  const [timeLeft, setTimeLeft] = useState(0);
-  const [transcript, setTranscript] = useState('');
-  const [isRecording, setIsRecording] = useState(false);
-  const [feedback, setFeedback] = useState(null);
-  
-  const recognitionRef = useRef(null);
+        const PHASE_TIMERS = { research: 120, organize: 60, speak: 60, roleplay: 180 };
 
-  // Timer Effect
-  useEffect(() => {
-    let interval = null;
-    if (['research', 'organize', 'speak'].includes(phase) && timeLeft > 0) {
-      interval = setInterval(() => {
-        setTimeLeft(prev => prev - 1);
-      }, 1000);
-    } else if (timeLeft === 0 && interval) {
-      clearInterval(interval);
-      advancePhase();
-    }
-    return () => {
-      if (interval) clearInterval(interval);
-    };
-  }, [phase, timeLeft]);
+        // Central State Management
+        const state = {
+            userId: null,
+            activeTab: 'quickYap',
+            goals: [],
+            transcripts: [],
+            quickYap: { phase: 'idle', topic: '', timeLeft: 0, transcript: '', isRecording: false, feedback: null, timerInterval: null },
+            roleplay: { phase: 'idle', scenario: '', timeLeft: 0, transcript: '', isRecording: false, feedback: null, timerInterval: null },
+            unsubGoals: null,
+            unsubTranscripts: null,
+            recognition: null
+        };
 
-  const advancePhase = async () => {
-    if (phase === 'research') {
-      setPhase('organize');
-      setTimeLeft(PHASE_TIMERS.organize);
-    } else if (phase === 'organize') {
-      setPhase('speak');
-      setTimeLeft(PHASE_TIMERS.speak);
-      setTranscript(''); // Clear previous runs
-    } else if (phase === 'speak') {
-      if (isRecording) stopRecording();
-      setPhase('grading');
-      await handleGrading();
-    }
-  };
+        function initSpeechRecognition() {
+            const SpeechRecognition = window.SpeechRecognition || window.webkitSpeechRecognition;
+            if (SpeechRecognition) {
+                state.recognition = new SpeechRecognition();
+                state.recognition.continuous = true;
+                state.recognition.interimResults = true;
+                
+                state.recognition.onresult = (event) => {
+                    let finalTranscript = '';
+                    let interimTranscript = '';
+                    for (let i = event.resultIndex; i < event.results.length; ++i) {
+                        if (event.results[i].isFinal) {
+                            finalTranscript += event.results[i][0].transcript + ' ';
+                        } else {
+                            interimTranscript += event.results[i][0].transcript;
+                        }
+                    }
+                    
+                    // Route transcript to correct tab
+                    if (state.activeTab === 'quickYap' && state.quickYap.isRecording) {
+                        state.quickYap.transcript += finalTranscript;
+                        updateTranscriptUI(state.quickYap.transcript, interimTranscript);
+                    } else if (state.activeTab === 'roleplay' && state.roleplay.isRecording) {
+                        state.roleplay.transcript += finalTranscript;
+                        updateTranscriptUI(state.roleplay.transcript, interimTranscript);
+                    }
+                };
 
-  const handleGrading = async () => {
-    const result = await evaluateSpeech(topic, transcript, 'quickYap', goals);
-    setFeedback(result);
-    setPhase('finished');
-    onSave({
-      type: 'Quick Yap',
-      topic: topic,
-      transcript: transcript || '(No transcript recorded)',
-      grade: result.grade,
-      summary: result.summary
-    });
-  };
-
-  const spinTopic = () => {
-    setPhase('spinning');
-    let spins = 0;
-    const maxSpins = 20;
-    const interval = setInterval(() => {
-      setTopic(TOPICS[Math.floor(Math.random() * TOPICS.length)]);
-      spins++;
-      if (spins >= maxSpins) {
-        clearInterval(interval);
-        setTimeout(() => {
-          setPhase('research');
-          setTimeLeft(PHASE_TIMERS.research);
-        }, 500);
-      }
-    }, 50);
-  };
-
-  // Web Speech API Setup
-  const toggleRecording = () => {
-    if (isRecording) {
-      stopRecording();
-    } else {
-      startRecording();
-    }
-  };
-
-  const startRecording = () => {
-    const SpeechRecognition = window.SpeechRecognition || window.webkitSpeechRecognition;
-    if (!SpeechRecognition) {
-      // alert replacement
-      console.error("Speech Recognition not supported in this browser.");
-      return;
-    }
-
-    if (!recognitionRef.current) {
-      recognitionRef.current = new SpeechRecognition();
-      recognitionRef.current.continuous = true;
-      recognitionRef.current.interimResults = true;
-      
-      recognitionRef.current.onresult = (event) => {
-        let finalTranscript = '';
-        let interimTranscript = '';
-        for (let i = event.resultIndex; i < event.results.length; ++i) {
-          if (event.results[i].isFinal) {
-            finalTranscript += event.results[i][0].transcript + ' ';
-          } else {
-            interimTranscript += event.results[i][0].transcript;
-          }
+                state.recognition.onend = () => {
+                    // Auto-restart if we are still supposed to be recording
+                    if ((state.activeTab === 'quickYap' && state.quickYap.isRecording && state.quickYap.phase === 'speak') ||
+                        (state.activeTab === 'roleplay' && state.roleplay.isRecording && state.roleplay.phase === 'speak')) {
+                        try { state.recognition.start(); } catch(e) {}
+                    } else {
+                        if(state.activeTab === 'quickYap') state.quickYap.isRecording = false;
+                        if(state.activeTab === 'roleplay') state.roleplay.isRecording = false;
+                        updateRecordingBtnUI();
+                    }
+                };
+            } else {
+                console.warn("Speech Recognition API not supported.");
+            }
         }
-        setTranscript(prev => prev + finalTranscript);
-      };
 
-      recognitionRef.current.onend = () => {
-        // Auto-restart if we are still supposed to be recording
-        if (isRecording && phase === 'speak') {
-          try {
-             recognitionRef.current.start();
-          } catch(e) {}
-        } else {
-          setIsRecording(false);
+        async function initAuth() {
+            try {
+                if (typeof __initial_auth_token !== 'undefined' && __initial_auth_token) {
+                    await signInWithCustomToken(auth, __initial_auth_token);
+                } else {
+                    await signInAnonymously(auth);
+                }
+            } catch (err) {
+                console.error("Auth error:", err);
+                document.getElementById('loading-overlay').innerHTML = `<p class="text-rose-500 font-bold p-4">Authentication Failed. Please reload.</p>`;
+            }
         }
-      };
-    }
 
-    try {
-      recognitionRef.current.start();
-      setIsRecording(true);
-    } catch (e) {
-      console.error(e);
-    }
-  };
+        onAuthStateChanged(auth, (user) => {
+            if (user) {
+                state.userId = user.uid;
+                document.getElementById('loading-overlay').classList.add('hidden');
+                document.getElementById('app-header').classList.remove('hidden');
+                document.getElementById('app-main').classList.remove('hidden');
+                
+                initSpeechRecognition();
+                fetchGoals();
+                fetchTranscripts();
+                renderTabContent();
+            }
+        });
 
-  const stopRecording = () => {
-    if (recognitionRef.current) {
-      recognitionRef.current.stop();
-      setIsRecording(false);
-    }
-  };
-
-  const reset = () => {
-    setPhase('idle');
-    setTopic('');
-    setTranscript('');
-    setFeedback(null);
-    if (isRecording) stopRecording();
-  };
-
-  return (
-    <div className="bg-white rounded-xl shadow-sm border border-slate-200 p-6 sm:p-10 max-w-2xl mx-auto">
-      <div className="text-center mb-8">
-        <h1 className="text-3xl font-bold text-slate-800 mb-2">Quick Yap</h1>
-        <p className="text-slate-500">Practice thinking on your feet with random topics.</p>
-      </div>
-
-      {phase === 'idle' && (
-        <div className="flex flex-col items-center justify-center py-12">
-          <div className="w-24 h-24 bg-indigo-50 rounded-full flex items-center justify-center mb-6">
-            <RefreshCw className="w-10 h-10 text-indigo-500" />
-          </div>
-          <button 
-            onClick={spinTopic}
-            className="bg-indigo-600 hover:bg-indigo-700 text-white font-semibold py-3 px-8 rounded-full shadow-md transition-transform active:scale-95"
-          >
-            Spin a Topic
-          </button>
-        </div>
-      )}
-
-      {phase === 'spinning' && (
-        <div className="flex flex-col items-center justify-center py-12">
-          <div className="text-2xl font-medium text-slate-700 animate-pulse text-center">
-            {topic}
-          </div>
-        </div>
-      )}
-
-      {['research', 'organize', 'speak'].includes(phase) && (
-        <div className="flex flex-col items-center">
-          <div className="bg-slate-50 w-full p-6 rounded-lg border border-slate-100 mb-8 text-center">
-            <h2 className="text-sm font-semibold text-indigo-600 uppercase tracking-wider mb-2">Your Topic</h2>
-            <p className="text-2xl font-medium text-slate-800">{topic}</p>
-          </div>
-
-          <div className="flex flex-col items-center mb-8">
-            <div className="text-sm font-semibold text-slate-500 uppercase tracking-wider mb-2">
-              {phase === 'research' && "Research Phase"}
-              {phase === 'organize' && "Organize Thoughts Phase"}
-              {phase === 'speak' && "Speaking Phase"}
-            </div>
-            <div className={`text-6xl font-bold font-mono tracking-tighter ${timeLeft <= 10 ? 'text-rose-500 animate-pulse' : 'text-slate-800'}`}>
-              {formatTime(timeLeft)}
-            </div>
-            <button 
-              onClick={advancePhase}
-              className="mt-4 flex items-center gap-2 text-sm text-slate-500 hover:text-indigo-600 transition-colors"
-            >
-              <SkipForward className="w-4 h-4" /> Skip Timer
-            </button>
-          </div>
-
-          {phase === 'speak' && (
-            <div className="w-full flex flex-col items-center gap-4">
-              <button
-                onClick={toggleRecording}
-                className={`flex items-center gap-2 py-3 px-6 rounded-full font-semibold shadow-md transition-all ${
-                  isRecording 
-                    ? 'bg-rose-100 text-rose-700 hover:bg-rose-200 border border-rose-200 animate-pulse' 
-                    : 'bg-emerald-600 text-white hover:bg-emerald-700'
-                }`}
-              >
-                {isRecording ? <Square className="w-5 h-5 fill-current" /> : <Mic className="w-5 h-5" />}
-                {isRecording ? 'Stop Recording' : 'Start Recording'}
-              </button>
-              
-              <div className="w-full p-4 bg-slate-50 border border-slate-200 rounded-lg min-h-[120px] max-h-[200px] overflow-y-auto">
-                {transcript || <span className="text-slate-400 italic">Your speech transcript will appear here...</span>}
-              </div>
-            </div>
-          )}
-        </div>
-      )}
-
-      {phase === 'grading' && (
-        <div className="flex flex-col items-center justify-center py-12">
-          <RefreshCw className="w-10 h-10 text-indigo-500 animate-spin mb-4" />
-          <p className="text-lg font-medium text-slate-700">AI Coach is evaluating your speech...</p>
-        </div>
-      )}
-
-      {phase === 'finished' && feedback && (
-        <div className="animate-in fade-in slide-in-from-bottom-4 duration-500">
-          <div className="bg-emerald-50 border border-emerald-100 rounded-xl p-6 text-center mb-6">
-            <div className="w-16 h-16 bg-emerald-100 text-emerald-600 rounded-full flex items-center justify-center mx-auto mb-4 text-3xl font-bold">
-              {feedback.grade}
-            </div>
-            <h3 className="text-xl font-bold text-slate-800 mb-2">Evaluation Complete</h3>
-            <p className="text-slate-600">{feedback.summary}</p>
-          </div>
-          
-          <div className="mb-6">
-            <h4 className="text-sm font-semibold text-slate-500 uppercase mb-2">Transcript</h4>
-            <div className="p-4 bg-slate-50 border border-slate-200 rounded-lg text-slate-700 max-h-40 overflow-y-auto">
-              {transcript || '(No transcript recorded)'}
-            </div>
-          </div>
-
-          <div className="flex justify-center">
-            <button 
-              onClick={reset}
-              className="bg-indigo-600 hover:bg-indigo-700 text-white font-semibold py-3 px-8 rounded-full shadow-md transition-colors"
-            >
-              Go Again
-            </button>
-          </div>
-        </div>
-      )}
-    </div>
-  );
-}
-
-function RoleplayTab({ onSave, goals }) {
-  // Phases: idle, spinning, speak, grading, finished
-  const [phase, setPhase] = useState('idle');
-  const [scenario, setScenario] = useState('');
-  const [timeLeft, setTimeLeft] = useState(0);
-  const [transcript, setTranscript] = useState('');
-  const [isRecording, setIsRecording] = useState(false);
-  const [feedback, setFeedback] = useState(null);
-  
-  const recognitionRef = useRef(null);
-
-  useEffect(() => {
-    let interval = null;
-    if (phase === 'speak' && timeLeft > 0) {
-      interval = setInterval(() => {
-        setTimeLeft(prev => prev - 1);
-      }, 1000);
-    } else if (timeLeft === 0 && interval) {
-      clearInterval(interval);
-      handleGrading();
-    }
-    return () => {
-      if (interval) clearInterval(interval);
-    };
-  }, [phase, timeLeft]);
-
-  const spinScenario = () => {
-    setPhase('spinning');
-    let spins = 0;
-    const maxSpins = 15;
-    const interval = setInterval(() => {
-      setScenario(ROLEPLAY_SCENARIOS[Math.floor(Math.random() * ROLEPLAY_SCENARIOS.length)]);
-      spins++;
-      if (spins >= maxSpins) {
-        clearInterval(interval);
-        setTimeout(() => {
-          setPhase('speak');
-          setTimeLeft(PHASE_TIMERS.roleplay);
-          setTranscript('');
-        }, 500);
-      }
-    }, 60);
-  };
-
-  const handleGrading = async () => {
-    if (isRecording) stopRecording();
-    setPhase('grading');
-    const result = await evaluateSpeech(scenario, transcript, 'roleplay', goals);
-    setFeedback(result);
-    setPhase('finished');
-    onSave({
-      type: 'Roleplay',
-      topic: scenario,
-      transcript: transcript || '(No transcript recorded)',
-      grade: result.grade,
-      summary: result.summary
-    });
-  };
-
-  // Web Speech API Setup
-  const toggleRecording = () => {
-    if (isRecording) {
-      stopRecording();
-    } else {
-      startRecording();
-    }
-  };
-
-  const startRecording = () => {
-    const SpeechRecognition = window.SpeechRecognition || window.webkitSpeechRecognition;
-    if (!SpeechRecognition) return;
-
-    if (!recognitionRef.current) {
-      recognitionRef.current = new SpeechRecognition();
-      recognitionRef.current.continuous = true;
-      recognitionRef.current.interimResults = true;
-      
-      recognitionRef.current.onresult = (event) => {
-        let finalTranscript = '';
-        for (let i = event.resultIndex; i < event.results.length; ++i) {
-          if (event.results[i].isFinal) {
-            finalTranscript += event.results[i][0].transcript + ' ';
-          }
-        }
-        setTranscript(prev => prev + finalTranscript);
-      };
-
-      recognitionRef.current.onend = () => {
-        if (isRecording && phase === 'speak') {
-          try { recognitionRef.current.start(); } catch(e) {}
-        } else {
-          setIsRecording(false);
-        }
-      };
-    }
-
-    try {
-      recognitionRef.current.start();
-      setIsRecording(true);
-    } catch (e) {}
-  };
-
-  const stopRecording = () => {
-    if (recognitionRef.current) {
-      recognitionRef.current.stop();
-      setIsRecording(false);
-    }
-  };
-
-  const reset = () => {
-    setPhase('idle');
-    setScenario('');
-    setTranscript('');
-    setFeedback(null);
-    if (isRecording) stopRecording();
-  };
-
-  return (
-    <div className="bg-white rounded-xl shadow-sm border border-slate-200 p-6 sm:p-10 max-w-2xl mx-auto">
-      <div className="text-center mb-8">
-        <h1 className="text-3xl font-bold text-slate-800 mb-2">Roleplay Scenario</h1>
-        <p className="text-slate-500">Solve problems and practice interpersonal skills under pressure.</p>
-      </div>
-
-      {phase === 'idle' && (
-        <div className="flex flex-col items-center justify-center py-12">
-          <div className="w-24 h-24 bg-orange-50 rounded-full flex items-center justify-center mb-6">
-            <MessageSquare className="w-10 h-10 text-orange-500" />
-          </div>
-          <button 
-            onClick={spinScenario}
-            className="bg-orange-500 hover:bg-orange-600 text-white font-semibold py-3 px-8 rounded-full shadow-md transition-transform active:scale-95"
-          >
-            Get Scenario
-          </button>
-        </div>
-      )}
-
-      {phase === 'spinning' && (
-        <div className="flex flex-col items-center justify-center py-12">
-          <div className="text-xl font-medium text-slate-700 animate-pulse text-center p-6 bg-slate-50 rounded-lg">
-            {scenario}
-          </div>
-        </div>
-      )}
-
-      {phase === 'speak' && (
-        <div className="flex flex-col items-center">
-          <div className="bg-orange-50 w-full p-6 rounded-lg border border-orange-100 mb-8">
-            <h2 className="text-sm font-semibold text-orange-600 uppercase tracking-wider mb-3 flex items-center gap-2">
-              <CheckCircle className="w-4 h-4" /> Scenario
-            </h2>
-            <p className="text-lg font-medium text-slate-800 italic">"{scenario}"</p>
-          </div>
-
-          <div className="flex flex-col items-center mb-8">
-            <div className="text-sm font-semibold text-slate-500 uppercase tracking-wider mb-2">Time to Respond</div>
-            <div className={`text-6xl font-bold font-mono tracking-tighter ${timeLeft <= 10 ? 'text-rose-500 animate-pulse' : 'text-slate-800'}`}>
-              {formatTime(timeLeft)}
-            </div>
-            <button 
-              onClick={handleGrading}
-              className="mt-4 flex items-center gap-2 text-sm text-slate-500 hover:text-orange-600 transition-colors"
-            >
-              <SkipForward className="w-4 h-4" /> Finish Early
-            </button>
-          </div>
-
-          <div className="w-full flex flex-col items-center gap-4">
-            <button
-              onClick={toggleRecording}
-              className={`flex items-center gap-2 py-3 px-6 rounded-full font-semibold shadow-md transition-all ${
-                isRecording 
-                  ? 'bg-rose-100 text-rose-700 hover:bg-rose-200 border border-rose-200 animate-pulse' 
-                  : 'bg-emerald-600 text-white hover:bg-emerald-700'
-              }`}
-            >
-              {isRecording ? <Square className="w-5 h-5 fill-current" /> : <Mic className="w-5 h-5" />}
-              {isRecording ? 'Stop Recording' : 'Start Recording'}
-            </button>
+        function fetchGoals() {
+            if (!state.userId) return;
+            if (state.unsubGoals) state.unsubGoals();
             
-            <div className="w-full p-4 bg-slate-50 border border-slate-200 rounded-lg min-h-[120px] max-h-[200px] overflow-y-auto">
-              {transcript || <span className="text-slate-400 italic">Speak your solution...</span>}
-            </div>
-          </div>
-        </div>
-      )}
+            const q = query(collection(db, 'artifacts', appId, 'users', state.userId, 'goals'));
+            state.unsubGoals = onSnapshot(q, (snapshot) => {
+                state.goals = snapshot.docs.map(doc => ({ id: doc.id, ...doc.data() }));
+                state.goals.sort((a, b) => (a.timestamp?.toMillis() || 0) - (b.timestamp?.toMillis() || 0));
+                renderGoals();
+            }, (err) => console.error(err));
+        }
 
-      {phase === 'grading' && (
-        <div className="flex flex-col items-center justify-center py-12">
-          <RefreshCw className="w-10 h-10 text-orange-500 animate-spin mb-4" />
-          <p className="text-lg font-medium text-slate-700">AI Coach is evaluating your response...</p>
-        </div>
-      )}
-
-      {phase === 'finished' && feedback && (
-        <div className="animate-in fade-in slide-in-from-bottom-4 duration-500">
-          <div className="bg-emerald-50 border border-emerald-100 rounded-xl p-6 text-center mb-6">
-            <div className="w-16 h-16 bg-emerald-100 text-emerald-600 rounded-full flex items-center justify-center mx-auto mb-4 text-3xl font-bold">
-              {feedback.grade}
-            </div>
-            <h3 className="text-xl font-bold text-slate-800 mb-2">Evaluation Complete</h3>
-            <p className="text-slate-600">{feedback.summary}</p>
-          </div>
-          
-          <div className="mb-6">
-            <h4 className="text-sm font-semibold text-slate-500 uppercase mb-2">Your Answer</h4>
-            <div className="p-4 bg-slate-50 border border-slate-200 rounded-lg text-slate-700 max-h-40 overflow-y-auto">
-              {transcript || '(No transcript recorded)'}
-            </div>
-          </div>
-
-          <div className="flex justify-center">
-            <button 
-              onClick={reset}
-              className="bg-orange-500 hover:bg-orange-600 text-white font-semibold py-3 px-8 rounded-full shadow-md transition-colors"
-            >
-              Try Another Scenario
-            </button>
-          </div>
-        </div>
-      )}
-    </div>
-  );
-}
-
-function TranscriptsTab({ transcripts, loading }) {
-  if (loading) {
-    return (
-      <div className="flex justify-center items-center py-20">
-        <RefreshCw className="w-8 h-8 text-indigo-500 animate-spin" />
-      </div>
-    );
-  }
-
-  if (transcripts.length === 0) {
-    return (
-      <div className="bg-white rounded-xl shadow-sm border border-slate-200 p-10 text-center max-w-2xl mx-auto">
-        <FileText className="w-16 h-16 text-slate-300 mx-auto mb-4" />
-        <h2 className="text-2xl font-bold text-slate-800 mb-2">No past transcripts</h2>
-        <p className="text-slate-500">Do a Quick Yap or Roleplay to start building your record!</p>
-      </div>
-    );
-  }
-
-  return (
-    <div className="grid grid-cols-1 md:grid-cols-2 gap-6">
-      {transcripts.map((item) => (
-        <div key={item.id} className="bg-white rounded-xl shadow-sm border border-slate-200 flex flex-col overflow-hidden transition-all hover:shadow-md">
-          <div className="bg-slate-50 px-5 py-4 border-b border-slate-100 flex justify-between items-center">
-            <span className={`text-xs font-bold uppercase tracking-wider px-2 py-1 rounded-full ${
-              item.type === 'Quick Yap' ? 'bg-indigo-100 text-indigo-700' : 'bg-orange-100 text-orange-700'
-            }`}>
-              {item.type}
-            </span>
-            <div className="flex items-center gap-1 font-bold text-emerald-600 bg-emerald-50 px-2 py-1 rounded-md">
-              <Award className="w-4 h-4" /> Grade: {item.grade}
-            </div>
-          </div>
-          
-          <div className="p-5 flex-1 flex flex-col">
-            <h3 className="font-semibold text-slate-800 mb-3 line-clamp-2" title={item.topic}>
-              {item.topic}
-            </h3>
+        function fetchTranscripts() {
+            if (!state.userId) return;
+            if (state.unsubTranscripts) state.unsubTranscripts();
             
-            <div className="text-sm text-slate-600 bg-slate-50 p-3 rounded-lg mb-4 italic flex-1 max-h-32 overflow-y-auto">
-              "{item.transcript}"
-            </div>
-            
-            <div>
-              <h4 className="text-xs font-semibold text-slate-400 uppercase mb-1">AI Feedback</h4>
-              <p className="text-sm text-slate-700">{item.summary}</p>
-            </div>
-          </div>
-          
-          {item.timestamp && (
-            <div className="px-5 py-3 bg-slate-50 text-xs text-slate-400 text-right border-t border-slate-100">
-              {new Date(item.timestamp.toMillis()).toLocaleString()}
-            </div>
-          )}
-        </div>
-      ))}
-    </div>
-  );
-}
+            const q = query(collection(db, 'artifacts', appId, 'users', state.userId, 'speeches'));
+            state.unsubTranscripts = onSnapshot(q, (snapshot) => {
+                state.transcripts = snapshot.docs.map(doc => ({ id: doc.id, ...doc.data() }));
+                state.transcripts.sort((a, b) => (b.timestamp?.toMillis() || 0) - (a.timestamp?.toMillis() || 0));
+                if (state.activeTab === 'transcripts') renderTabContent();
+            }, (err) => console.error(err));
+        }
 
+        async function evaluateSpeechWithGemini(topic, transcript, type) {
+            const apiKey = ""; // Canvas injects this
+            const apiUrl = `https://generativelanguage.googleapis.com/v1beta/models/gemini-3-flash-preview:generateContent?key=${apiKey}`;
+
+            const goalsText = state.goals.length > 0 
+                ? `\n\nAdditionally, specifically evaluate the speaker against their personal goals: ${state.goals.map(g => g.text).join(', ')}. Mention how well they adhered to these goals in your summary.` 
+                : '';
+
+            const prompt = type === 'Quick Yap' 
+                ? `Evaluate this 1-minute improv speech about: "${topic}".${goalsText}`
+                : `Evaluate this roleplay response to the scenario: "${topic}".${goalsText}`;
+
+            const payload = {
+                contents: [{ parts: [{ text: `${prompt}\n\nTranscript:\n"${transcript || '(No transcript recorded)'}"` }] }],
+                generationConfig: {
+                    responseMimeType: "application/json",
+                    responseSchema: {
+                        type: "OBJECT",
+                        properties: {
+                            grade: { type: "STRING", description: "Letter grade (A+, A, B, C, D, or F)." },
+                            summary: { type: "STRING", description: "2-3 sentence constructive feedback." }
+                        },
+                        required: ["grade", "summary"]
+                    }
+                },
+                systemInstruction: { parts: [{ text: "You are an expert speech and improv coach providing constructive feedback based on relevance, flow, and specific user goals." }] }
+            };
+
+            try {
+                const response = await fetch(apiUrl, { method: 'POST', headers: { 'Content-Type': 'application/json' }, body: JSON.stringify(payload) });
+                const data = await response.json();
+                const text = data.candidates?.[0]?.content?.parts?.[0]?.text;
+                if (text) return JSON.parse(text);
+            } catch (error) {
+                console.error("Gemini API Error:", error);
+            }
+            return { grade: "N/A", summary: "Evaluation failed. Try again." };
+        }
+
+        async function saveTranscriptToDB(type, topic, transcript, grade, summary) {
+            if (!state.userId) return;
+            try {
+                await addDoc(collection(db, 'artifacts', appId, 'users', state.userId, 'speeches'), {
+                    type, topic, transcript: transcript || '(No text)', grade, summary, timestamp: serverTimestamp()
+                });
+            } catch (err) {
+                console.error("Save error:", err);
+            }
+        }
+
+        document.getElementById('goal-form').addEventListener('submit', async (e) => {
+            e.preventDefault();
+            const input = document.getElementById('goal-input');
+            const text = input.value.trim();
+            if (!text || !state.userId) return;
+            
+            input.value = '';
+            try {
+                await addDoc(collection(db, 'artifacts', appId, 'users', state.userId, 'goals'), { text, timestamp: serverTimestamp() });
+            } catch (err) { console.error(err); }
+        });
+
+        // Event delegation for deleting goals
+        document.getElementById('goals-list').addEventListener('click', async (e) => {
+            const btn = e.target.closest('.delete-goal-btn');
+            if (btn && state.userId) {
+                const id = btn.dataset.id;
+                try {
+                    await deleteDoc(doc(db, 'artifacts', appId, 'users', state.userId, 'goals', id));
+                } catch (err) { console.error(err); }
+            }
+        });
+
+        function renderGoals() {
+            const list = document.getElementById('goals-list');
+            if (state.goals.length === 0) {
+                list.innerHTML = `<p class="text-sm text-slate-500 italic text-center py-4 bg-slate-50 rounded-lg">No goals added yet. Add some to get personalized AI feedback!</p>`;
+                return;
+            }
+            
+            list.innerHTML = state.goals.map(goal => `
+                <div class="flex items-center justify-between bg-slate-50 border border-slate-100 rounded-lg p-3 text-sm group transition-colors hover:border-indigo-200">
+                    <span class="text-slate-700 break-words flex-1 pr-2">${goal.text}</span>
+                    <button class="delete-goal-btn text-slate-400 hover:text-rose-500 opacity-100 md:opacity-0 group-hover:opacity-100 transition-opacity" data-id="${goal.id}" title="Remove">
+                        <svg xmlns="http://www.w3.org/2000/svg" width="16" height="16" viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="2" stroke-linecap="round" stroke-linejoin="round"><path d="M3 6h18"></path><path d="M19 6v14c0 1-1 2-2 2H7c-1 0-2-1-2-2V6"></path><path d="M8 6V4c0-1 1-2 2-2h4c1 0 2 1 2 2v2"></path></svg>
+                    </button>
+                </div>
+            `).join('');
+        }
+
+        document.getElementById('nav-tabs').addEventListener('click', (e) => {
+            const btn = e.target.closest('.tab-btn');
+            if (!btn) return;
+            
+            // Cleanup active timers/recording when switching tabs
+            if(state.quickYap.timerInterval) clearInterval(state.quickYap.timerInterval);
+            if(state.roleplay.timerInterval) clearInterval(state.roleplay.timerInterval);
+            if(state.recognition) state.recognition.stop();
+            state.quickYap.isRecording = false;
+            state.roleplay.isRecording = false;
+
+            const tabId = btn.dataset.tab;
+            state.activeTab = tabId;
+            
+            document.querySelectorAll('.tab-btn').forEach(b => {
+                if (b.dataset.tab === tabId) {
+                    b.className = 'tab-btn px-3 py-2 rounded-md text-sm font-medium transition-colors bg-indigo-100 text-indigo-700';
+                } else {
+                    b.className = 'tab-btn px-3 py-2 rounded-md text-sm font-medium transition-colors text-slate-600 hover:bg-slate-100 hover:text-slate-900';
+                }
+            });
+            
+            renderTabContent();
+        });
+
+        function formatTime(seconds) {
+            const m = Math.floor(seconds / 60);
+            const s = seconds % 60;
+            return `${m}:${s.toString().padStart(2, '0')}`;
+        }
+
+        function updateTimerUI(seconds) {
+            const el = document.getElementById('timer-display');
+            if (el) {
+                el.innerText = formatTime(seconds);
+                if (seconds <= 10) {
+                    el.classList.add('text-rose-500', 'animate-pulse');
+                    el.classList.remove('text-slate-800');
+                } else {
+                    el.classList.remove('text-rose-500', 'animate-pulse');
+                    el.classList.add('text-slate-800');
+                }
+            }
+        }
+
+        function updateTranscriptUI(finalText, interimText = '') {
+            const el = document.getElementById('transcript-display');
+            if (el) {
+                if (!finalText && !interimText) {
+                    el.innerHTML = `<span class="text-slate-400 italic">Your speech transcript will appear here...</span>`;
+                } else {
+                    el.innerHTML = `${finalText} <span class="text-slate-400">${interimText}</span>`;
+                }
+                el.scrollTop = el.scrollHeight; // Auto-scroll
+            }
+        }
+
+        function updateRecordingBtnUI() {
+            const btn = document.getElementById('record-btn');
+            const isRec = state.activeTab === 'quickYap' ? state.quickYap.isRecording : state.roleplay.isRecording;
+            if (btn) {
+                if (isRec) {
+                    btn.className = 'flex items-center gap-2 py-3 px-6 rounded-full font-semibold shadow-md transition-all bg-rose-100 text-rose-700 hover:bg-rose-200 border border-rose-200 animate-pulse';
+                    btn.innerHTML = `<svg xmlns="http://www.w3.org/2000/svg" width="20" height="20" viewBox="0 0 24 24" fill="currentColor" stroke="currentColor" stroke-width="2" stroke-linecap="round" stroke-linejoin="round"><rect x="3" y="3" width="18" height="18" rx="2" ry="2"></rect></svg> Stop Recording`;
+                } else {
+                    btn.className = 'flex items-center gap-2 py-3 px-6 rounded-full font-semibold shadow-md transition-all bg-emerald-600 text-white hover:bg-emerald-700';
+                    btn.innerHTML = `<svg xmlns="http://www.w3.org/2000/svg" width="20" height="20" viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="2" stroke-linecap="round" stroke-linejoin="round"><path d="M12 2a3 3 0 0 0-3 3v7a3 3 0 0 0 6 0V5a3 3 0 0 0-3-3Z"></path><path d="M19 10v2a7 7 0 0 1-14 0v-2"></path><line x1="12" x2="12" y1="19" y2="22"></line></svg> Start Recording`;
+                }
+            }
+        }
+
+        document.getElementById('tab-content').addEventListener('click', (e) => {
+            // Quick Yap Actions
+            if (e.target.closest('#qy-spin-btn')) startQuickYapSpin();
+            if (e.target.closest('#qy-skip-btn')) advanceQuickYapPhase();
+            if (e.target.closest('#qy-reset-btn')) resetQuickYap();
+            
+            // Roleplay Actions
+            if (e.target.closest('#rp-spin-btn')) startRoleplaySpin();
+            if (e.target.closest('#rp-skip-btn')) finishRoleplay();
+            if (e.target.closest('#rp-reset-btn')) resetRoleplay();
+
+            // Recording Actions
+            if (e.target.closest('#record-btn')) toggleRecording();
+        });
+
+        function toggleRecording() {
+            if (!state.recognition) return;
+            const tabState = state.activeTab === 'quickYap' ? state.quickYap : state.roleplay;
+            
+            if (tabState.isRecording) {
+                state.recognition.stop();
+                tabState.isRecording = false;
+            } else {
+                try {
+                    state.recognition.start();
+                    tabState.isRecording = true;
+                } catch(err) { console.error("Mic start err:", err); }
+            }
+            updateRecordingBtnUI();
+        }
+
+        function startQuickYapSpin() {
+            state.quickYap.phase = 'spinning';
+            renderTabContent();
+            
+            let spins = 0;
+            const maxSpins = 20;
+            const interval = setInterval(() => {
+                state.quickYap.topic = TOPICS[Math.floor(Math.random() * TOPICS.length)];
+                const topicDisplay = document.getElementById('qy-topic-display');
+                if(topicDisplay) topicDisplay.innerText = state.quickYap.topic;
+                
+                spins++;
+                if (spins >= maxSpins) {
+                    clearInterval(interval);
+                    setTimeout(() => {
+                        state.quickYap.phase = 'research';
+                        state.quickYap.timeLeft = PHASE_TIMERS.research;
+                        renderTabContent();
+                        startQuickYapTimer();
+                    }, 500);
+                }
+            }, 50);
+        }
+
+        function startQuickYapTimer() {
+            if(state.quickYap.timerInterval) clearInterval(state.quickYap.timerInterval);
+            
+            state.quickYap.timerInterval = setInterval(() => {
+                state.quickYap.timeLeft--;
+                updateTimerUI(state.quickYap.timeLeft);
+                
+                if (state.quickYap.timeLeft <= 0) {
+                    clearInterval(state.quickYap.timerInterval);
+                    advanceQuickYapPhase();
+                }
+            }, 1000);
+        }
+
+        async function advanceQuickYapPhase() {
+            if(state.quickYap.timerInterval) clearInterval(state.quickYap.timerInterval);
+            
+            if (state.quickYap.phase === 'research') {
+                state.quickYap.phase = 'organize';
+                state.quickYap.timeLeft = PHASE_TIMERS.organize;
+                renderTabContent();
+                startQuickYapTimer();
+            } else if (state.quickYap.phase === 'organize') {
+                state.quickYap.phase = 'speak';
+                state.quickYap.timeLeft = PHASE_TIMERS.speak;
+                state.quickYap.transcript = '';
+                renderTabContent();
+                startQuickYapTimer();
+            } else if (state.quickYap.phase === 'speak') {
+                if (state.quickYap.isRecording && state.recognition) {
+                    state.recognition.stop();
+                    state.quickYap.isRecording = false;
+                }
+                state.quickYap.phase = 'grading';
+                renderTabContent();
+                
+                const result = await evaluateSpeechWithGemini(state.quickYap.topic, state.quickYap.transcript, 'Quick Yap');
+                state.quickYap.feedback = result;
+                state.quickYap.phase = 'finished';
+                renderTabContent();
+                
+                saveTranscriptToDB('Quick Yap', state.quickYap.topic, state.quickYap.transcript, result.grade, result.summary);
+            }
+        }
+
+        function resetQuickYap() {
+            if(state.quickYap.timerInterval) clearInterval(state.quickYap.timerInterval);
+            if(state.quickYap.isRecording && state.recognition) state.recognition.stop();
+            state.quickYap = { phase: 'idle', topic: '', timeLeft: 0, transcript: '', isRecording: false, feedback: null, timerInterval: null };
+            renderTabContent();
+        }
+
+        function startRoleplaySpin() {
+            state.roleplay.phase = 'spinning';
+            renderTabContent();
+            
+            let spins = 0;
+            const maxSpins = 15;
+            const interval = setInterval(() => {
+                state.roleplay.scenario = ROLEPLAY_SCENARIOS[Math.floor(Math.random() * ROLEPLAY_SCENARIOS.length)];
+                const scenarioDisplay = document.getElementById('rp-scenario-display');
+                if(scenarioDisplay) scenarioDisplay.innerText = state.roleplay.scenario;
+                
+                spins++;
+                if (spins >= maxSpins) {
+                    clearInterval(interval);
+                    setTimeout(() => {
+                        state.roleplay.phase = 'speak';
+                        state.roleplay.timeLeft = PHASE_TIMERS.roleplay;
+                        state.roleplay.transcript = '';
+                        renderTabContent();
+                        startRoleplayTimer();
+                    }, 500);
+                }
+            }, 60);
+        }
+
+        function startRoleplayTimer() {
+            if(state.roleplay.timerInterval) clearInterval(state.roleplay.timerInterval);
+            
+            state.roleplay.timerInterval = setInterval(() => {
+                state.roleplay.timeLeft--;
+                updateTimerUI(state.roleplay.timeLeft);
+                
+                if (state.roleplay.timeLeft <= 0) {
+                    clearInterval(state.roleplay.timerInterval);
+                    finishRoleplay();
+                }
+            }, 1000);
+        }
+
+        async function finishRoleplay() {
+            if(state.roleplay.timerInterval) clearInterval(state.roleplay.timerInterval);
+            if (state.roleplay.isRecording && state.recognition) {
+                state.recognition.stop();
+                state.roleplay.isRecording = false;
+            }
+            state.roleplay.phase = 'grading';
+            renderTabContent();
+            
+            const result = await evaluateSpeechWithGemini(state.roleplay.scenario, state.roleplay.transcript, 'Roleplay');
+            state.roleplay.feedback = result;
+            state.roleplay.phase = 'finished';
+            renderTabContent();
+            
+            saveTranscriptToDB('Roleplay', state.roleplay.scenario, state.roleplay.transcript, result.grade, result.summary);
+        }
+
+        function resetRoleplay() {
+            if(state.roleplay.timerInterval) clearInterval(state.roleplay.timerInterval);
+            if(state.roleplay.isRecording && state.recognition) state.recognition.stop();
+            state.roleplay = { phase: 'idle', scenario: '', timeLeft: 0, transcript: '', isRecording: false, feedback: null, timerInterval: null };
+            renderTabContent();
+        }
+
+
+        function renderTabContent() {
+            const container = document.getElementById('tab-content');
+            
+            if (state.activeTab === 'quickYap') {
+                const s = state.quickYap;
+                let html = `<div class="text-center mb-8 fade-in"><h1 class="text-3xl font-bold text-slate-800 mb-2">Quick Yap</h1><p class="text-slate-500">Practice thinking on your feet with random topics.</p></div>`;
+                
+                if (s.phase === 'idle') {
+                    html += `
+                    <div class="flex flex-col items-center justify-center py-12 fade-in">
+                        <div class="w-24 h-24 bg-indigo-50 rounded-full flex items-center justify-center mb-6">
+                            <svg class="w-10 h-10 text-indigo-500" xmlns="http://www.w3.org/2000/svg" width="24" height="24" viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="2" stroke-linecap="round" stroke-linejoin="round"><path d="M21 12a9 9 0 1 1-9-9c2.52 0 4.93 1 6.74 2.74L21 8"></path><path d="M21 3v5h-5"></path></svg>
+                        </div>
+                        <button id="qy-spin-btn" class="bg-indigo-600 hover:bg-indigo-700 text-white font-semibold py-3 px-8 rounded-full shadow-md transition-transform active:scale-95">Spin a Topic</button>
+                    </div>`;
+                } else if (s.phase === 'spinning') {
+                    html += `
+                    <div class="flex flex-col items-center justify-center py-12">
+                        <div id="qy-topic-display" class="text-2xl font-medium text-slate-700 animate-pulse text-center">${s.topic}</div>
+                    </div>`;
+                } else if (['research', 'organize', 'speak'].includes(s.phase)) {
+                    let phaseTitle = s.phase === 'research' ? "Research Phase" : s.phase === 'organize' ? "Organize Thoughts Phase" : "Speaking Phase";
+                    html += `
+                    <div class="flex flex-col items-center fade-in">
+                        <div class="bg-slate-50 w-full max-w-xl p-6 rounded-lg border border-slate-100 mb-8 text-center">
+                            <h2 class="text-sm font-semibold text-indigo-600 uppercase tracking-wider mb-2">Your Topic</h2>
+                            <p class="text-2xl font-medium text-slate-800">${s.topic}</p>
+                        </div>
+                        <div class="flex flex-col items-center mb-8">
+                            <div class="text-sm font-semibold text-slate-500 uppercase tracking-wider mb-2">${phaseTitle}</div>
+                            <div id="timer-display" class="text-6xl font-bold font-mono tracking-tighter ${s.timeLeft <= 10 ? 'text-rose-500 animate-pulse' : 'text-slate-800'}">${formatTime(s.timeLeft)}</div>
+                            <button id="qy-skip-btn" class="mt-4 flex items-center gap-2 text-sm text-slate-500 hover:text-indigo-600 transition-colors">
+                                <svg xmlns="http://www.w3.org/2000/svg" width="16" height="16" viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="2" stroke-linecap="round" stroke-linejoin="round"><polygon points="5 4 15 12 5 20 5 4"></polygon><line x1="19" x2="19" y1="5" y2="19"></line></svg> Skip Timer
+                            </button>
+                        </div>
+                    `;
+                    
+                    if (s.phase === 'speak') {
+                        html += `
+                        <div class="w-full max-w-xl flex flex-col items-center gap-4">
+                            <button id="record-btn" class="flex items-center gap-2 py-3 px-6 rounded-full font-semibold shadow-md transition-all ${s.isRecording ? 'bg-rose-100 text-rose-700 hover:bg-rose-200 border border-rose-200 animate-pulse' : 'bg-emerald-600 text-white hover:bg-emerald-700'}">
+                                ${s.isRecording 
+                                    ? `<svg xmlns="http://www.w3.org/2000/svg" width="20" height="20" viewBox="0 0 24 24" fill="currentColor" stroke="currentColor" stroke-width="2" stroke-linecap="round" stroke-linejoin="round"><rect x="3" y="3" width="18" height="18" rx="2" ry="2"></rect></svg> Stop Recording` 
+                                    : `<svg xmlns="http://www.w3.org/2000/svg" width="20" height="20" viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="2" stroke-linecap="round" stroke-linejoin="round"><path d="M12 2a3 3 0 0 0-3 3v7a3 3 0 0 0 6 0V5a3 3 0 0 0-3-3Z"></path><path d="M19 10v2a7 7 0 0 1-14 0v-2"></path><line x1="12" x2="12" y1="19" y2="22"></line></svg> Start Recording`
+                                }
+                            </button>
+                            <div id="transcript-display" class="w-full p-4 bg-slate-50 border border-slate-200 rounded-lg min-h-[120px] max-h-[200px] overflow-y-auto text-left text-slate-700">
+                                ${s.transcript || '<span class="text-slate-400 italic">Your speech transcript will appear here...</span>'}
+                            </div>
+                        </div>`;
+                    }
+                    html += `</div>`;
+                } else if (s.phase === 'grading') {
+                    html += `
+                    <div class="flex flex-col items-center justify-center py-12 fade-in">
+                        <svg class="w-10 h-10 text-indigo-500 animate-spin mb-4" xmlns="http://www.w3.org/2000/svg" fill="none" viewBox="0 0 24 24"><circle class="opacity-25" cx="12" cy="12" r="10" stroke="currentColor" stroke-width="4"></circle><path class="opacity-75" fill="currentColor" d="M4 12a8 8 0 018-8V0C5.373 0 0 5.373 0 12h4zm2 5.291A7.962 7.962 0 014 12H0c0 3.042 1.135 5.824 3 7.938l3-2.647z"></path></svg>
+                        <p class="text-lg font-medium text-slate-700">AI Coach is evaluating your speech...</p>
+                    </div>`;
+                } else if (s.phase === 'finished') {
+                    html += `
+                    <div class="fade-in max-w-2xl mx-auto">
+                        <div class="bg-emerald-50 border border-emerald-100 rounded-xl p-6 text-center mb-6 shadow-sm">
+                            <div class="w-16 h-16 bg-emerald-100 text-emerald-600 rounded-full flex items-center justify-center mx-auto mb-4 text-3xl font-bold shadow-sm">
+                                ${s.feedback.grade}
+                            </div>
+                            <h3 class="text-xl font-bold text-slate-800 mb-2">Evaluation Complete</h3>
+                            <p class="text-slate-600 text-left">${s.feedback.summary}</p>
+                        </div>
+                        <div class="mb-6 text-left">
+                            <h4 class="text-sm font-semibold text-slate-500 uppercase mb-2">Transcript</h4>
+                            <div class="p-4 bg-slate-50 border border-slate-200 rounded-lg text-slate-700 max-h-40 overflow-y-auto">
+                                ${s.transcript || '(No transcript recorded)'}
+                            </div>
+                        </div>
+                        <div class="flex justify-center">
+                            <button id="qy-reset-btn" class="bg-indigo-600 hover:bg-indigo-700 text-white font-semibold py-3 px-8 rounded-full shadow-md transition-colors">Go Again</button>
+                        </div>
+                    </div>`;
+                }
+                container.innerHTML = html;
+
+            } else if (state.activeTab === 'roleplay') {
+                const s = state.roleplay;
+                let html = `<div class="text-center mb-8 fade-in"><h1 class="text-3xl font-bold text-slate-800 mb-2">Roleplay Scenario</h1><p class="text-slate-500">Solve problems and practice interpersonal skills under pressure.</p></div>`;
+                
+                if (s.phase === 'idle') {
+                    html += `
+                    <div class="flex flex-col items-center justify-center py-12 fade-in">
+                        <div class="w-24 h-24 bg-orange-50 rounded-full flex items-center justify-center mb-6">
+                            <svg class="w-10 h-10 text-orange-500" xmlns="http://www.w3.org/2000/svg" width="24" height="24" viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="2" stroke-linecap="round" stroke-linejoin="round"><path d="M21 15a2 2 0 0 1-2 2H7l-4 4V5a2 2 0 0 1 2-2h14a2 2 0 0 1 2 2z"></path></svg>
+                        </div>
+                        <button id="rp-spin-btn" class="bg-orange-500 hover:bg-orange-600 text-white font-semibold py-3 px-8 rounded-full shadow-md transition-transform active:scale-95">Get Scenario</button>
+                    </div>`;
+                } else if (s.phase === 'spinning') {
+                    html += `
+                    <div class="flex flex-col items-center justify-center py-12">
+                        <div id="rp-scenario-display" class="text-xl font-medium text-slate-700 animate-pulse text-center p-6 bg-slate-50 rounded-lg max-w-xl">${s.scenario}</div>
+                    </div>`;
+                } else if (s.phase === 'speak') {
+                    html += `
+                    <div class="flex flex-col items-center fade-in">
+                        <div class="bg-orange-50 w-full max-w-2xl p-6 rounded-lg border border-orange-100 mb-8 text-left">
+                            <h2 class="text-sm font-semibold text-orange-600 uppercase tracking-wider mb-3 flex items-center gap-2">
+                                <svg class="w-4 h-4" xmlns="http://www.w3.org/2000/svg" width="24" height="24" viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="2" stroke-linecap="round" stroke-linejoin="round"><path d="M22 11.08V12a10 10 0 1 1-5.93-9.14"></path><polyline points="22 4 12 14.01 9 11.01"></polyline></svg> Scenario
+                            </h2>
+                            <p class="text-lg font-medium text-slate-800 italic">"${s.scenario}"</p>
+                        </div>
+                        <div class="flex flex-col items-center mb-8">
+                            <div class="text-sm font-semibold text-slate-500 uppercase tracking-wider mb-2">Time to Respond</div>
+                            <div id="timer-display" class="text-6xl font-bold font-mono tracking-tighter ${s.timeLeft <= 10 ? 'text-rose-500 animate-pulse' : 'text-slate-800'}">${formatTime(s.timeLeft)}</div>
+                            <button id="rp-skip-btn" class="mt-4 flex items-center gap-2 text-sm text-slate-500 hover:text-orange-600 transition-colors">
+                                <svg xmlns="http://www.w3.org/2000/svg" width="16" height="16" viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="2" stroke-linecap="round" stroke-linejoin="round"><polygon points="5 4 15 12 5 20 5 4"></polygon><line x1="19" x2="19" y1="5" y2="19"></line></svg> Finish Early
+                            </button>
+                        </div>
+                        <div class="w-full max-w-xl flex flex-col items-center gap-4">
+                            <button id="record-btn" class="flex items-center gap-2 py-3 px-6 rounded-full font-semibold shadow-md transition-all ${s.isRecording ? 'bg-rose-100 text-rose-700 hover:bg-rose-200 border border-rose-200 animate-pulse' : 'bg-emerald-600 text-white hover:bg-emerald-700'}">
+                                ${s.isRecording 
+                                    ? `<svg xmlns="http://www.w3.org/2000/svg" width="20" height="20" viewBox="0 0 24 24" fill="currentColor" stroke="currentColor" stroke-width="2" stroke-linecap="round" stroke-linejoin="round"><rect x="3" y="3" width="18" height="18" rx="2" ry="2"></rect></svg> Stop Recording` 
+                                    : `<svg xmlns="http://www.w3.org/2000/svg" width="20" height="20" viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="2" stroke-linecap="round" stroke-linejoin="round"><path d="M12 2a3 3 0 0 0-3 3v7a3 3 0 0 0 6 0V5a3 3 0 0 0-3-3Z"></path><path d="M19 10v2a7 7 0 0 1-14 0v-2"></path><line x1="12" x2="12" y1="19" y2="22"></line></svg> Start Recording`
+                                }
+                            </button>
+                            <div id="transcript-display" class="w-full p-4 bg-slate-50 border border-slate-200 rounded-lg min-h-[120px] max-h-[200px] overflow-y-auto text-left text-slate-700">
+                                ${s.transcript || '<span class="text-slate-400 italic">Speak your solution...</span>'}
+                            </div>
+                        </div>
+                    </div>`;
+                } else if (s.phase === 'grading') {
+                    html += `
+                    <div class="flex flex-col items-center justify-center py-12 fade-in">
+                        <svg class="w-10 h-10 text-orange-500 animate-spin mb-4" xmlns="http://www.w3.org/2000/svg" fill="none" viewBox="0 0 24 24"><circle class="opacity-25" cx="12" cy="12" r="10" stroke="currentColor" stroke-width="4"></circle><path class="opacity-75" fill="currentColor" d="M4 12a8 8 0 018-8V0C5.373 0 0 5.373 0 12h4zm2 5.291A7.962 7.962 0 014 12H0c0 3.042 1.135 5.824 3 7.938l3-2.647z"></path></svg>
+                        <p class="text-lg font-medium text-slate-700">AI Coach is evaluating your response...</p>
+                    </div>`;
+                } else if (s.phase === 'finished') {
+                    html += `
+                    <div class="fade-in max-w-2xl mx-auto">
+                        <div class="bg-emerald-50 border border-emerald-100 rounded-xl p-6 text-center mb-6 shadow-sm">
+                            <div class="w-16 h-16 bg-emerald-100 text-emerald-600 rounded-full flex items-center justify-center mx-auto mb-4 text-3xl font-bold shadow-sm">
+                                ${s.feedback.grade}
+                            </div>
+                            <h3 class="text-xl font-bold text-slate-800 mb-2">Evaluation Complete</h3>
+                            <p class="text-slate-600 text-left">${s.feedback.summary}</p>
+                        </div>
+                        <div class="mb-6 text-left">
+                            <h4 class="text-sm font-semibold text-slate-500 uppercase mb-2">Your Answer</h4>
+                            <div class="p-4 bg-slate-50 border border-slate-200 rounded-lg text-slate-700 max-h-40 overflow-y-auto">
+                                ${s.transcript || '(No transcript recorded)'}
+                            </div>
+                        </div>
+                        <div class="flex justify-center">
+                            <button id="rp-reset-btn" class="bg-orange-500 hover:bg-orange-600 text-white font-semibold py-3 px-8 rounded-full shadow-md transition-colors">Try Another Scenario</button>
+                        </div>
+                    </div>`;
+                }
+                container.innerHTML = html;
+
+            } else if (state.activeTab === 'transcripts') {
+                if (state.transcripts.length === 0) {
+                    container.innerHTML = `
+                        <div class="bg-white rounded-xl text-center max-w-2xl mx-auto py-12 fade-in">
+                            <svg class="w-16 h-16 text-slate-300 mx-auto mb-4" xmlns="http://www.w3.org/2000/svg" width="24" height="24" viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="2" stroke-linecap="round" stroke-linejoin="round"><path d="M14.5 2H6a2 2 0 0 0-2 2v16a2 2 0 0 0 2 2h12a2 2 0 0 0 2-2V7.5L14.5 2z"></path><polyline points="14 2 14 8 20 8"></polyline><line x1="16" y1="13" x2="8" y2="13"></line><line x1="16" y1="17" x2="8" y2="17"></line><line x1="10" y1="9" x2="8" y2="9"></line></svg>
+                            <h2 class="text-2xl font-bold text-slate-800 mb-2">No past transcripts</h2>
+                            <p class="text-slate-500">Do a Quick Yap or Roleplay to start building your record!</p>
+                        </div>`;
+                } else {
+                    let html = `<div class="grid grid-cols-1 xl:grid-cols-2 gap-6 fade-in pb-10">`;
+                    state.transcripts.forEach(item => {
+                        const dateStr = item.timestamp ? new Date(item.timestamp.toMillis()).toLocaleString() : 'Just now';
+                        const isQuickYap = item.type === 'Quick Yap';
+                        html += `
+                        <div class="bg-white rounded-xl shadow-sm border border-slate-200 flex flex-col overflow-hidden transition-all hover:shadow-md text-left">
+                            <div class="bg-slate-50 px-5 py-4 border-b border-slate-100 flex justify-between items-center">
+                                <span class="text-xs font-bold uppercase tracking-wider px-2 py-1 rounded-full ${isQuickYap ? 'bg-indigo-100 text-indigo-700' : 'bg-orange-100 text-orange-700'}">
+                                    ${item.type}
+                                </span>
+                                <div class="flex items-center gap-1 font-bold text-emerald-600 bg-emerald-50 px-2 py-1 rounded-md text-sm">
+                                    Grade: ${item.grade}
+                                </div>
+                            </div>
+                            <div class="p-5 flex-1 flex flex-col">
+                                <h3 class="font-semibold text-slate-800 mb-3 line-clamp-2" title="${item.topic}">${item.topic}</h3>
+                                <div class="text-sm text-slate-600 bg-slate-50 p-3 rounded-lg mb-4 italic flex-1 max-h-32 overflow-y-auto">
+                                    "${item.transcript}"
+                                </div>
+                                <div>
+                                    <h4 class="text-xs font-semibold text-slate-400 uppercase mb-1">AI Feedback</h4>
+                                    <p class="text-sm text-slate-700">${item.summary}</p>
+                                </div>
+                            </div>
+                            <div class="px-5 py-3 bg-slate-50 text-xs text-slate-400 text-right border-t border-slate-100">
+                                ${dateStr}
+                            </div>
+                        </div>`;
+                    });
+                    html += `</div>`;
+                    container.innerHTML = html;
+                }
+            }
+        }
+
+        // Initialize Application
+        initAuth();
+
+    </script>
 </body>
 </html>
