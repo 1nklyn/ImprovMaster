@@ -84,14 +84,15 @@
         import { getFirestore, collection, addDoc, onSnapshot, query, serverTimestamp, doc, deleteDoc } from "https://www.gstatic.com/firebasejs/11.6.1/firebase-firestore.js";
 
         const firebaseConfig = {
-        apiKey: "AIzaSyAv1WuQnae978yTiudYKooHZJxBTShqY00",
-        authDomain: "improvmaster-fa605.firebaseapp.com",
-        projectId: "improvmaster-fa605",
-        storageBucket: "improvmaster-fa605.firebasestorage.app",
-        messagingSenderId: "709210029107",
-        appId: "1:709210029107:web:9c52d5f8de26c07bf4f746",
-        measurementId: "G-C3GN79PPW3"
-        const appId = 'improv-master-app';
+  apiKey: "AIzaSyAv1WuQnae978yTiudYKooHZJxBTShqY00",
+  authDomain: "improvmaster-fa605.firebaseapp.com",
+  projectId: "improvmaster-fa605",
+  storageBucket: "improvmaster-fa605.firebasestorage.app",
+  messagingSenderId: "709210029107",
+  : "1:709210029107:web:9c52d5f8de26c07bf4f746",
+  measurementId: "G-C3GN79PPW3"
+        window. = 'improv-master-app';
+};
         };
         
         const app = initializeApp(firebaseConfig);
@@ -214,7 +215,7 @@
             if (!state.userId) return;
             if (state.unsubGoals) state.unsubGoals();
             
-            const q = query(collection(db, 'artifacts', appId, 'users', state.userId, 'goals'));
+            const q = query(collection(db, 'artifacts', window., 'users', state.userId, 'goals'));
             state.unsubGoals = onSnapshot(q, (snapshot) => {
                 const now = Date.now();
                 state.goals = snapshot.docs.map(doc => ({ id: doc.id, ...doc.data() }));
@@ -231,7 +232,7 @@
             if (!state.userId) return;
             if (state.unsubTranscripts) state.unsubTranscripts();
             
-            const q = query(collection(db, 'artifacts', appId, 'users', state.userId, 'speeches'));
+            const q = query(collection(db, 'artifacts', , 'users', state.userId, 'speeches'));
             state.unsubTranscripts = onSnapshot(q, (snapshot) => {
                 const now = Date.now();
                 state.transcripts = snapshot.docs.map(doc => ({ id: doc.id, ...doc.data() }));
@@ -286,7 +287,7 @@
         async function saveTranscriptToDB(type, topic, transcript, grade, summary) {
             if (!state.userId) return;
             try {
-                await addDoc(collection(db, 'artifacts', appId, 'users', state.userId, 'speeches'), {
+                await addDoc(collection(db, 'artifacts', , 'users', state.userId, 'speeches'), {
                     type, topic, transcript: transcript || '(No text)', grade, summary, timestamp: serverTimestamp()
                 });
             } catch (err) {
@@ -302,7 +303,7 @@
             
             try {
                 // Keep the text in the input until it's successfully saved
-                await addDoc(collection(db, 'artifacts', appId, 'users', state.userId, 'goals'), { text, timestamp: serverTimestamp() });
+                await addDoc(collection(db, 'artifacts', , 'users', state.userId, 'goals'), { text, timestamp: serverTimestamp() });
                 input.value = '';
             } catch (err) { 
                 console.error("Failed to add goal:", err); 
@@ -315,7 +316,7 @@
             if (btn && state.userId) {
                 const id = btn.dataset.id;
                 try {
-                    await deleteDoc(doc(db, 'artifacts', appId, 'users', state.userId, 'goals', id));
+                    await deleteDoc(doc(db, 'artifacts', , 'users', state.userId, 'goals', id));
                 } catch (err) { console.error(err); }
             }
         });
