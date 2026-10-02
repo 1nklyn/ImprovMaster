@@ -82,9 +82,15 @@
         import { initializeApp } from "https://www.gstatic.com/firebasejs/11.6.1/firebase-app.js";
         import { getAuth, signInAnonymously, signInWithCustomToken, onAuthStateChanged } from "https://www.gstatic.com/firebasejs/11.6.1/firebase-auth.js";
         import { getFirestore, collection, addDoc, onSnapshot, query, serverTimestamp, doc, deleteDoc } from "https://www.gstatic.com/firebasejs/11.6.1/firebase-firestore.js";
-
-        const firebaseConfig = typeof __firebase_config !== 'undefined' ? JSON.parse(__firebase_config) : {};
-        const appId = typeof __app_id !== 'undefined' ? __app_id : 'default-app-id';
+        const firebaseConfig = {
+            apiKey: "AIzaSyAv1WuQnae978yTiudYKooHZJxBTShqY00",
+            authDomain: "improvmaster-fa605.firebaseapp.com",
+            projectId: "improvmaster-fa605",
+            storageBucket: "improvmaster-fa605.firebasestorage.app",
+            messagingSenderId: "709210029107",
+            appId: "1:709210029107:web:9c52d5f8de26c07bf4f746",
+            measurementId: "G-C3GN79PPW3"
+        };
         
         const app = initializeApp(firebaseConfig);
         const auth = getAuth(app);
