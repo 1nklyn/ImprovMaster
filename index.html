@@ -3,10 +3,10 @@
 <head>
     <meta charset="UTF-8">
     <meta name="viewport" content="width=device-width, initial-scale=1.0">
-    <title>ImprovMaster - Practice Speaking</title>
+    <title>ImprovMaster - Speech & Roleplay Coach</title>
+    <!-- Tailwind CSS CDN -->
     <script src="https://cdn.tailwindcss.com"></script>
     <style>
-        /* Custom scrollbar for better aesthetics */
         ::-webkit-scrollbar { width: 6px; }
         ::-webkit-scrollbar-track { background: transparent; }
         ::-webkit-scrollbar-thumb { background: #cbd5e1; border-radius: 10px; }
@@ -21,7 +21,6 @@
 </head>
 <body class="bg-slate-50 text-slate-900 font-sans h-screen flex flex-col overflow-hidden">
 
-    <!-- Loading Overlay -->
     <div id="loading-overlay" class="absolute inset-0 bg-slate-50 z-50 flex items-center justify-center">
         <div class="flex flex-col items-center">
             <svg class="animate-spin h-10 w-10 text-indigo-600 mb-4" xmlns="http://www.w3.org/2000/svg" fill="none" viewBox="0 0 24 24">
@@ -32,7 +31,6 @@
         </div>
     </div>
 
-    <!-- Header -->
     <header class="bg-white border-b border-slate-200 sticky top-0 z-10 shadow-sm flex-shrink-0 hidden" id="app-header">
         <div class="max-w-7xl mx-auto px-4 h-16 flex items-center justify-between w-full">
             <div class="flex items-center gap-2 font-bold text-xl text-indigo-600">
@@ -47,7 +45,6 @@
         </div>
     </header>
 
-    <!-- Main Content Area -->
     <div class="flex-1 max-w-7xl mx-auto w-full flex flex-col md:flex-row items-stretch gap-6 p-4 sm:p-6 md:p-8 overflow-hidden hidden" id="app-main">
         
         <!-- Sidebar: Goals Panel -->
@@ -77,7 +74,6 @@
         </main>
     </div>
 
-    <!-- FIREBASE AND APP LOGIC -->
     <script type="module">
         import { initializeApp } from "https://www.gstatic.com/firebasejs/11.6.1/firebase-app.js";
         import { getAuth, signInAnonymously, signInWithCustomToken, onAuthStateChanged } from "https://www.gstatic.com/firebasejs/11.6.1/firebase-auth.js";
@@ -89,11 +85,9 @@
   projectId: "improvmaster-fa605",
   storageBucket: "improvmaster-fa605.firebasestorage.app",
   messagingSenderId: "709210029107",
-  : "1:709210029107:web:9c52d5f8de26c07bf4f746",
+  appId: "1:709210029107:web:9c52d5f8de26c07bf4f746",
   measurementId: "G-C3GN79PPW3"
-        window. = 'improv-master-app';
 };
-        };
         
         const app = initializeApp(firebaseConfig);
         const auth = getAuth(app);
@@ -133,8 +127,8 @@
             activeTab: 'quickYap',
             goals: [],
             transcripts: [],
-            quickYap: { phase: 'idle', topic: '', timeLeft: 0, transcript: '', isRecording: false, feedback: null, timerInterval: null },
-            roleplay: { phase: 'idle', scenario: '', timeLeft: 0, transcript: '', isRecording: false, feedback: null, timerInterval: null },
+            quickYap: { phase: 'idle', topic: '', timeLeft: 0, transcript: '', notes: '', isRecording: false, feedback: null, timerInterval: null },
+            roleplay: { phase: 'idle', scenario: '', timeLeft: 0, transcript: '', notes: '', isRecording: false, feedback: null, timerInterval: null },
             unsubGoals: null,
             unsubTranscripts: null,
             recognition: null
@@ -158,7 +152,6 @@
                         }
                     }
                     
-                    // Route transcript to correct tab
                     if (state.activeTab === 'quickYap' && state.quickYap.isRecording) {
                         state.quickYap.transcript += finalTranscript;
                         updateTranscriptUI(state.quickYap.transcript, interimTranscript);
@@ -169,7 +162,6 @@
                 };
 
                 state.recognition.onend = () => {
-                    // Auto-restart if we are still supposed to be recording
                     if ((state.activeTab === 'quickYap' && state.quickYap.isRecording && state.quickYap.phase === 'speak') ||
                         (state.activeTab === 'roleplay' && state.roleplay.isRecording && state.roleplay.phase === 'speak')) {
                         try { state.recognition.start(); } catch(e) {}
@@ -215,7 +207,7 @@
             if (!state.userId) return;
             if (state.unsubGoals) state.unsubGoals();
             
-            const q = query(collection(db, 'artifacts', window., 'users', state.userId, 'goals'));
+            const q = query(collection(db, 'artifacts', appId, 'users', state.userId, 'goals'));
             state.unsubGoals = onSnapshot(q, (snapshot) => {
                 const now = Date.now();
                 state.goals = snapshot.docs.map(doc => ({ id: doc.id, ...doc.data() }));
@@ -232,7 +224,7 @@
             if (!state.userId) return;
             if (state.unsubTranscripts) state.unsubTranscripts();
             
-            const q = query(collection(db, 'artifacts', , 'users', state.userId, 'speeches'));
+            const q = query(collection(db, 'artifacts', appId, 'users', state.userId, 'speeches'));
             state.unsubTranscripts = onSnapshot(q, (snapshot) => {
                 const now = Date.now();
                 state.transcripts = snapshot.docs.map(doc => ({ id: doc.id, ...doc.data() }));
@@ -246,7 +238,7 @@
         }
 
         async function evaluateSpeechWithGemini(topic, transcript, type) {
-            const apiKey = ""; // Canvas injects this
+            const apiKey = ""; 
             const apiUrl = `https://generativelanguage.googleapis.com/v1beta/models/gemini-3-flash-preview:generateContent?key=${apiKey}`;
 
             const goalsText = state.goals.length > 0 
@@ -287,7 +279,7 @@
         async function saveTranscriptToDB(type, topic, transcript, grade, summary) {
             if (!state.userId) return;
             try {
-                await addDoc(collection(db, 'artifacts', , 'users', state.userId, 'speeches'), {
+                await addDoc(collection(db, 'artifacts', appId, 'users', state.userId, 'speeches'), {
                     type, topic, transcript: transcript || '(No text)', grade, summary, timestamp: serverTimestamp()
                 });
             } catch (err) {
@@ -302,21 +294,19 @@
             if (!text || !state.userId) return;
             
             try {
-                // Keep the text in the input until it's successfully saved
-                await addDoc(collection(db, 'artifacts', , 'users', state.userId, 'goals'), { text, timestamp: serverTimestamp() });
+                await addDoc(collection(db, 'artifacts', appId, 'users', state.userId, 'goals'), { text, timestamp: serverTimestamp() });
                 input.value = '';
             } catch (err) { 
                 console.error("Failed to add goal:", err); 
             }
         });
 
-        // Event delegation for deleting goals
         document.getElementById('goals-list').addEventListener('click', async (e) => {
             const btn = e.target.closest('.delete-goal-btn');
             if (btn && state.userId) {
                 const id = btn.dataset.id;
                 try {
-                    await deleteDoc(doc(db, 'artifacts', , 'users', state.userId, 'goals', id));
+                    await deleteDoc(doc(db, 'artifacts', appId, 'users', state.userId, 'goals', id));
                 } catch (err) { console.error(err); }
             }
         });
@@ -342,7 +332,6 @@
             const btn = e.target.closest('.tab-btn');
             if (!btn) return;
             
-            // Cleanup active timers/recording when switching tabs
             if(state.quickYap.timerInterval) clearInterval(state.quickYap.timerInterval);
             if(state.roleplay.timerInterval) clearInterval(state.roleplay.timerInterval);
             if(state.recognition) state.recognition.stop();
@@ -391,7 +380,7 @@
                 } else {
                     el.innerHTML = `${finalText} <span class="text-slate-400">${interimText}</span>`;
                 }
-                el.scrollTop = el.scrollHeight; // Auto-scroll
+                el.scrollTop = el.scrollHeight;
             }
         }
 
@@ -409,18 +398,22 @@
             }
         }
 
+        document.getElementById('tab-content').addEventListener('input', (e) => {
+            if (e.target.id === 'notes-textarea') {
+                if (state.activeTab === 'quickYap') state.quickYap.notes = e.target.value;
+                if (state.activeTab === 'roleplay') state.roleplay.notes = e.target.value;
+            }
+        });
+
         document.getElementById('tab-content').addEventListener('click', (e) => {
-            // Quick Yap Actions
             if (e.target.closest('#qy-spin-btn')) startQuickYapSpin();
             if (e.target.closest('#qy-skip-btn')) advanceQuickYapPhase();
             if (e.target.closest('#qy-reset-btn')) resetQuickYap();
             
-            // Roleplay Actions
             if (e.target.closest('#rp-spin-btn')) startRoleplaySpin();
             if (e.target.closest('#rp-skip-btn')) finishRoleplay();
             if (e.target.closest('#rp-reset-btn')) resetRoleplay();
 
-            // Recording Actions
             if (e.target.closest('#record-btn')) toggleRecording();
         });
 
@@ -512,7 +505,7 @@
         function resetQuickYap() {
             if(state.quickYap.timerInterval) clearInterval(state.quickYap.timerInterval);
             if(state.quickYap.isRecording && state.recognition) state.recognition.stop();
-            state.quickYap = { phase: 'idle', topic: '', timeLeft: 0, transcript: '', isRecording: false, feedback: null, timerInterval: null };
+            state.quickYap = { phase: 'idle', topic: '', timeLeft: 0, transcript: '', notes: '', isRecording: false, feedback: null, timerInterval: null };
             renderTabContent();
         }
 
@@ -575,10 +568,9 @@
         function resetRoleplay() {
             if(state.roleplay.timerInterval) clearInterval(state.roleplay.timerInterval);
             if(state.roleplay.isRecording && state.recognition) state.recognition.stop();
-            state.roleplay = { phase: 'idle', scenario: '', timeLeft: 0, transcript: '', isRecording: false, feedback: null, timerInterval: null };
+            state.roleplay = { phase: 'idle', scenario: '', timeLeft: 0, transcript: '', notes: '', isRecording: false, feedback: null, timerInterval: null };
             renderTabContent();
         }
-
 
         function renderTabContent() {
             const container = document.getElementById('tab-content');
@@ -615,11 +607,18 @@
                                 <svg xmlns="http://www.w3.org/2000/svg" width="16" height="16" viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="2" stroke-linecap="round" stroke-linejoin="round"><polygon points="5 4 15 12 5 20 5 4"></polygon><line x1="19" x2="19" y1="5" y2="19"></line></svg> Skip Timer
                             </button>
                         </div>
+                        
+                        <div class="w-full max-w-xl mb-8 flex flex-col">
+                            <label class="text-sm font-semibold text-slate-500 uppercase tracking-wider mb-2 flex items-center gap-2">
+                                <svg xmlns="http://www.w3.org/2000/svg" width="16" height="16" viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="2" stroke-linecap="round" stroke-linejoin="round"><path d="M12 20h9"></path><path d="M16.5 3.5a2.121 2.121 0 0 1 3 3L7 19l-4 1 1-4L16.5 3.5z"></path></svg> Speaking Notes
+                            </label>
+                            <textarea id="notes-textarea" placeholder="Jot down your main points, keywords, or structure here..." class="w-full bg-slate-50 border border-slate-200 rounded-lg p-3 text-slate-700 text-sm focus:outline-none focus:ring-2 focus:ring-indigo-500 min-h-[100px] resize-y">${s.notes}</textarea>
+                        </div>
                     `;
                     
                     if (s.phase === 'speak') {
                         html += `
-                        <div class="w-full max-w-xl flex flex-col items-center gap-4">
+                        <div class="w-full max-w-xl flex flex-col items-center gap-4 border-t border-slate-100 pt-8">
                             <button id="record-btn" class="flex items-center gap-2 py-3 px-6 rounded-full font-semibold shadow-md transition-all ${s.isRecording ? 'bg-rose-100 text-rose-700 hover:bg-rose-200 border border-rose-200 animate-pulse' : 'bg-emerald-600 text-white hover:bg-emerald-700'}">
                                 ${s.isRecording 
                                     ? `<svg xmlns="http://www.w3.org/2000/svg" width="20" height="20" viewBox="0 0 24 24" fill="currentColor" stroke="currentColor" stroke-width="2" stroke-linecap="round" stroke-linejoin="round"><rect x="3" y="3" width="18" height="18" rx="2" ry="2"></rect></svg> Stop Recording` 
@@ -694,7 +693,15 @@
                                 <svg xmlns="http://www.w3.org/2000/svg" width="16" height="16" viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="2" stroke-linecap="round" stroke-linejoin="round"><polygon points="5 4 15 12 5 20 5 4"></polygon><line x1="19" x2="19" y1="5" y2="19"></line></svg> Finish Early
                             </button>
                         </div>
-                        <div class="w-full max-w-xl flex flex-col items-center gap-4">
+
+                        <div class="w-full max-w-xl mb-8 flex flex-col">
+                            <label class="text-sm font-semibold text-slate-500 uppercase tracking-wider mb-2 flex items-center gap-2">
+                                <svg xmlns="http://www.w3.org/2000/svg" width="16" height="16" viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="2" stroke-linecap="round" stroke-linejoin="round"><path d="M12 20h9"></path><path d="M16.5 3.5a2.121 2.121 0 0 1 3 3L7 19l-4 1 1-4L16.5 3.5z"></path></svg> Speaking Notes
+                            </label>
+                            <textarea id="notes-textarea" placeholder="Jot down your strategy or key phrases here..." class="w-full bg-slate-50 border border-slate-200 rounded-lg p-3 text-slate-700 text-sm focus:outline-none focus:ring-2 focus:ring-orange-500 min-h-[100px] resize-y">${s.notes}</textarea>
+                        </div>
+
+                        <div class="w-full max-w-xl flex flex-col items-center gap-4 border-t border-slate-100 pt-8">
                             <button id="record-btn" class="flex items-center gap-2 py-3 px-6 rounded-full font-semibold shadow-md transition-all ${s.isRecording ? 'bg-rose-100 text-rose-700 hover:bg-rose-200 border border-rose-200 animate-pulse' : 'bg-emerald-600 text-white hover:bg-emerald-700'}">
                                 ${s.isRecording 
                                     ? `<svg xmlns="http://www.w3.org/2000/svg" width="20" height="20" viewBox="0 0 24 24" fill="currentColor" stroke="currentColor" stroke-width="2" stroke-linecap="round" stroke-linejoin="round"><rect x="3" y="3" width="18" height="18" rx="2" ry="2"></rect></svg> Stop Recording` 
@@ -723,7 +730,7 @@
                             <p class="text-slate-600 text-left">${s.feedback.summary}</p>
                         </div>
                         <div class="mb-6 text-left">
-                            <h4 class="text-sm font-semibold text-slate-500 uppercase mb-2">Your Answer</h4>
+                            <h4 class="text-sm font-semibold text-slate-400 uppercase mb-2">Your Answer</h4>
                             <div class="p-4 bg-slate-50 border border-slate-200 rounded-lg text-slate-700 max-h-40 overflow-y-auto">
                                 ${s.transcript || '(No transcript recorded)'}
                             </div>
@@ -779,9 +786,7 @@
             }
         }
 
-        // Initialize Application
         initAuth();
-
     </script>
 </body>
 </html>
