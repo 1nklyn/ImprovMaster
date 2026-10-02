@@ -82,15 +82,16 @@
         import { initializeApp } from "https://www.gstatic.com/firebasejs/11.6.1/firebase-app.js";
         import { getAuth, signInAnonymously, signInWithCustomToken, onAuthStateChanged } from "https://www.gstatic.com/firebasejs/11.6.1/firebase-auth.js";
         import { getFirestore, collection, addDoc, onSnapshot, query, serverTimestamp, doc, deleteDoc } from "https://www.gstatic.com/firebasejs/11.6.1/firebase-firestore.js";
-        const firebaseConfig = {
-            apiKey: "AIzaSyAv1WuQnae978yTiudYKooHZJxBTShqY00",
-            authDomain: "improvmaster-fa605.firebaseapp.com",
-            projectId: "improvmaster-fa605",
-            storageBucket: "improvmaster-fa605.firebasestorage.app",
-            messagingSenderId: "709210029107",
-            appId: "1:709210029107:web:9c52d5f8de26c07bf4f746",
-            measurementId: "G-C3GN79PPW3"
-        };
+
+const firebaseConfig = {
+  apiKey: "AIzaSyAv1WuQnae978yTiudYKooHZJxBTShqY00",
+  authDomain: "improvmaster-fa605.firebaseapp.com",
+  projectId: "improvmaster-fa605",
+  storageBucket: "improvmaster-fa605.firebasestorage.app",
+  messagingSenderId: "709210029107",
+  appId: "1:709210029107:web:9c52d5f8de26c07bf4f746",
+  measurementId: "G-C3GN79PPW3"
+};
         
         const app = initializeApp(firebaseConfig);
         const auth = getAuth(app);
@@ -214,8 +215,13 @@
             
             const q = query(collection(db, 'artifacts', appId, 'users', state.userId, 'goals'));
             state.unsubGoals = onSnapshot(q, (snapshot) => {
+                const now = Date.now();
                 state.goals = snapshot.docs.map(doc => ({ id: doc.id, ...doc.data() }));
-                state.goals.sort((a, b) => (a.timestamp?.toMillis() || 0) - (b.timestamp?.toMillis() || 0));
+                state.goals.sort((a, b) => {
+                    const tA = a.timestamp && typeof a.timestamp.toMillis === 'function' ? a.timestamp.toMillis() : now;
+                    const tB = b.timestamp && typeof b.timestamp.toMillis === 'function' ? b.timestamp.toMillis() : now;
+                    return tA - tB;
+                });
                 renderGoals();
             }, (err) => console.error(err));
         }
@@ -226,8 +232,13 @@
             
             const q = query(collection(db, 'artifacts', appId, 'users', state.userId, 'speeches'));
             state.unsubTranscripts = onSnapshot(q, (snapshot) => {
+                const now = Date.now();
                 state.transcripts = snapshot.docs.map(doc => ({ id: doc.id, ...doc.data() }));
-                state.transcripts.sort((a, b) => (b.timestamp?.toMillis() || 0) - (a.timestamp?.toMillis() || 0));
+                state.transcripts.sort((a, b) => {
+                    const tA = a.timestamp && typeof a.timestamp.toMillis === 'function' ? a.timestamp.toMillis() : now;
+                    const tB = b.timestamp && typeof b.timestamp.toMillis === 'function' ? b.timestamp.toMillis() : now;
+                    return tB - tA;
+                });
                 if (state.activeTab === 'transcripts') renderTabContent();
             }, (err) => console.error(err));
         }
@@ -288,10 +299,13 @@
             const text = input.value.trim();
             if (!text || !state.userId) return;
             
-            input.value = '';
             try {
+                // Keep the text in the input until it's successfully saved
                 await addDoc(collection(db, 'artifacts', appId, 'users', state.userId, 'goals'), { text, timestamp: serverTimestamp() });
-            } catch (err) { console.error(err); }
+                input.value = '';
+            } catch (err) { 
+                console.error("Failed to add goal:", err); 
+            }
         });
 
         // Event delegation for deleting goals
